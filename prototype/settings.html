@@ -91,8 +91,8 @@
   .update-action:hover { border-color: #000; background: #000; }
   .update-action:disabled { opacity: .65; cursor: default; }
 
-  /* ---------- Two columns: themes on the left, preview + parameters on the right ---------- */
-  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 28px; padding: 0 32px; min-height: 0; }
+  /* ---------- Two columns: large live preview on the left, settings on the right ---------- */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 28px; padding: 0 32px; min-height: 0; }
   .side { display: flex; flex-direction: column; gap: 18px; min-height: 0; padding: 22px; background: var(--panel); border-radius: 24px; }
 
   /* ---------- Themes ---------- */
@@ -145,7 +145,10 @@
 
   /* ---------- Preview + parameters ---------- */
   .card { min-height: 0; }
-  .preview-card { flex: none; }
+  .preview-card { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 22px; background: var(--panel); border-radius: 24px; }
+  .preview-card .stage { flex: 1; min-height: 0; align-items: center; }
+  .theme-list[hidden] { display: none; }
+  .side .controls { border-top: 0; }
   .preview-head { margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .adaptive-switch[hidden] { display: none; }
   .preview-head h2 { font-size: 28px; font-weight: 650; letter-spacing: -.04em; line-height: 1.2; }
@@ -278,7 +281,6 @@
 <header class="top">
   <div class="top-left">
     <div class="brand">Dynamic Glow</div>
-    <div class="section-title" data-i18n="themes">Themes</div>
   </div>
   <div class="top-right">
     <label class="lang-row" hidden>
@@ -303,10 +305,7 @@
       <button class="ghost-btn update-action" id="updateProgram" data-i18n="updateProgram">Update now</button>
     </div>
     <div class="warn" id="autostartWarn" hidden role="alert"><p><b data-i18n="autostartBlocked">Start with Windows may have been blocked</b><br><span id="autostartWarnText"></span></p><button id="autostartWarnOk" data-i18n="gotIt">Got it</button></div>
-    <div class="theme-list" id="themes"></div>
-  </section>
-
-  <div class="side">
+    <div class="theme-list" id="themes" hidden></div>
     <section class="card preview-card">
       <div class="preview-head"><h2 id="themeName">&nbsp;</h2><label class="switch-row adaptive-switch" id="adaptiveRow" hidden><span data-i18n="adaptive">Adaptive</span><input type="checkbox" id="adaptive" role="switch" checked><i class="switch" aria-hidden="true"></i></label></div>
       <div class="stage" id="stage"><div class="preview" id="previewBox"><iframe id="preview" data-i18n-title="livePreview" title="Live preview" tabindex="-1"></iframe></div></div>
@@ -323,6 +322,9 @@
           <span id="shareVideoText">Share video</span></button>
       </div>
     </section>
+  </section>
+
+  <div class="side">
     <section class="card controls" id="controls"></section>
   </div>
 </main>
@@ -706,9 +708,7 @@ function screenCss() {
 function layoutPreview() {
   if (!state.screen) return;
   const s = screenCss(), stage = $('stage').getBoundingClientRect();
-  // In small windows leave room for the parameters so the preview does not hide even the first slider.
-  const maxHeight = Math.min(innerHeight * 0.42, Math.max(110, innerHeight - 520));
-  const k = Math.min(stage.width / s.w, maxHeight / s.h);
+  const k = Math.max(0.05, Math.min(stage.width / s.w, Math.max(120, stage.height) / s.h));
   $('previewBox').style.width = Math.floor(s.w * k) + 'px';
   $('previewBox').style.height = Math.floor(s.h * k) + 'px';
   frame.style.width = s.w + 'px'; frame.style.height = s.h + 'px';
