@@ -1,4 +1,4 @@
-// Dynamic Island · desktop host (fork of Deskland, GPL-3.0)
+// Dynamic Glow · desktop host (fork of Deskland, GPL-3.0)
 //
 // 做四件事：
 //   1. 把一个无边框窗口挂到桌面图标下面（壁纸层），里面用 WebView2 显示当前主题的页面（如 prototype/flat.html?wallpaper=1）
@@ -27,9 +27,9 @@ using Microsoft.Win32;
 
 static class Program
 {
-    public static readonly string ExitEventName = "DynamicIslandHost_Exit" + InstallProfile.Suffix;
-    public static readonly string MenuEventName = "DynamicIslandHost_Menu" + InstallProfile.Suffix;
-    public static readonly string SettingsEventName = "DynamicIslandHost_Settings" + InstallProfile.Suffix;
+    public static readonly string ExitEventName = "DynamicGlowHost_Exit" + InstallProfile.Suffix;
+    public static readonly string MenuEventName = "DynamicGlowHost_Menu" + InstallProfile.Suffix;
+    public static readonly string SettingsEventName = "DynamicGlowHost_Settings" + InstallProfile.Suffix;
 
     // 通知正在运行的实例（退出 / 弹出菜单）
     static void Signal(string name)
@@ -42,9 +42,9 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
-        // DynamicIsland.exe --exit     : ask the running instance to quit (restores the original wallpaper)
-        // DynamicIsland.exe --menu     : show the tray menu at the mouse position
-        // DynamicIsland.exe --settings : open the settings window
+        // DynamicGlow.exe --exit     : ask the running instance to quit (restores the original wallpaper)
+        // DynamicGlow.exe --menu     : show the tray menu at the mouse position
+        // DynamicGlow.exe --settings : open the settings window
         if (args.Length > 0 && args[0] == "--exit") { Signal(ExitEventName); return; }
         if (args.Length > 0 && args[0] == "--menu") { Signal(MenuEventName); return; }
         if (args.Length > 0 && args[0] == "--settings") { Signal(SettingsEventName); return; }
@@ -53,7 +53,7 @@ static class Program
         bool fromAutostart = Array.IndexOf(args, "--autostart") >= 0;
         if (fromAutostart) AutoStartCheck.MarkLaunched();  // 开机自启跑起来了（不管后面是不是已经在运行）
         bool created;
-        var mutex = new Mutex(true, "DynamicIslandHost_Singleton" + InstallProfile.Suffix, out created);
+        var mutex = new Mutex(true, "DynamicGlowHost_Singleton" + InstallProfile.Suffix, out created);
         if (!created)
         {
             if (!fromAutostart) Signal(SettingsEventName); // 已经在运行：再次双击程序 = 打开设置（开机自启那次就悄悄退出）
@@ -67,8 +67,17 @@ static class Program
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += delegate(object s, ThreadExceptionEventArgs e) { Log.Write("未处理的异常：" + e.Exception); };
         AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs e) { Log.Write("致命异常：" + e.ExceptionObject); };
-        string exeDir = AppDomain.CurrentDomain.BaseDirectory;
-        string pageDir = Path.GetFullPath(Path.Combine(exeDir, @"..\..\prototype"));
+        Rename.Migrate();
+        string pageDir = Payload.Prepare();
+        if (pageDir == null) { MessageBox.Show("Dynamic Glow couldn't unpack its files. See host.log in %LOCALAPPDATA%\\DynamicGlow.", "Dynamic Glow"); return; }
+        Run(args, pageDir);
+        GC.KeepAlive(mutex);
+    }
+
+    // Kept out of Main so no WebView2 type is touched before Payload.Prepare() has set up assembly resolution.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    static void Run(string[] args, string pageDir)
+    {
         // 24H2+ 的挂法：默认做 Progman 的分层子窗口（换系统壁纸时会闪一下）；
         //   --defview：挂进图标层里、图标列表之下（实验：实测画不出来）；--legacy：挂进 WorkerW（换壁纸时会被连带销毁）
         string attach = "progman";
@@ -82,7 +91,63 @@ static class Program
         }
         WallpaperForm.AttachMode = attach;
         Application.Run(new HostContext(pageDir, !autostart));
-        GC.KeepAlive(mutex);
+    }
+}
+
+// Single-file build: build.ps1 embeds payload.zip (pages + WebView2 DLLs + icon, deflate-compressed) in the exe.
+// It is unpacked once per build into %LOCALAPPDATA%\DynamicGlow\app\<hash>. A development build (exe in host\bin next to the
+// DLLs, pages in ..\..\prototype) runs in place.
+static class Payload
+{
+    public static string AppDir;                       // where the DLLs and icon live
+
+    public static string Prepare()
+    {
+        string exeDir = AppDomain.CurrentDomain.BaseDirectory;
+        string devPages = Path.GetFullPath(Path.Combine(exeDir, @"..\..\prototype"));
+        var res = Assembly.GetExecutingAssembly().GetManifestResourceStream("payload.zip");
+        if (res == null || (File.Exists(Path.Combine(devPages, "settings.html")) && File.Exists(Path.Combine(exeDir, "Microsoft.Web.WebView2.Core.dll"))))
+        {
+            AppDir = exeDir;
+            return devPages;
+        }
+        try
+        {
+            byte[] zip;
+            using (res) { zip = new byte[res.Length]; int n = 0; while (n < zip.Length) n += res.Read(zip, n, zip.Length - n); }
+            string hash;
+            using (var sha = System.Security.Cryptography.SHA1.Create()) hash = BitConverter.ToString(sha.ComputeHash(zip)).Replace("-", "").Substring(0, 12);
+            string root = Path.Combine(Log.DataDir, "app"), dir = Path.Combine(root, hash), done = Path.Combine(dir, ".ok");
+            if (!File.Exists(done))
+            {
+                string tmp = dir + ".tmp" + Process.GetCurrentProcess().Id;
+                if (Directory.Exists(tmp)) Directory.Delete(tmp, true);
+                using (var a = new System.IO.Compression.ZipArchive(new MemoryStream(zip)))
+                    foreach (var e in a.Entries)
+                    {
+                        if (e.FullName.EndsWith("/")) continue;
+                        string target = Path.GetFullPath(Path.Combine(tmp, e.FullName));
+                        if (!target.StartsWith(tmp + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
+                        Directory.CreateDirectory(Path.GetDirectoryName(target));
+                        using (var src = e.Open()) using (var dst = File.Create(target)) src.CopyTo(dst);
+                    }
+                File.WriteAllText(Path.Combine(tmp, ".ok"), hash);
+                if (Directory.Exists(dir)) Directory.Delete(dir, true);
+                Directory.Move(tmp, dir);
+                Log.Write("Unpacked app files to " + dir);
+                foreach (string old in Directory.GetDirectories(root))           // drop files from older versions
+                    if (!string.Equals(old, dir, StringComparison.OrdinalIgnoreCase)) try { Directory.Delete(old, true); } catch { }
+            }
+            AppDir = dir + Path.DirectorySeparatorChar;
+            AppDomain.CurrentDomain.AssemblyResolve += delegate(object s, ResolveEventArgs e)
+            {
+                string file = Path.Combine(AppDir, new AssemblyName(e.Name).Name + ".dll");
+                return File.Exists(file) ? Assembly.LoadFrom(file) : null;
+            };
+            Native.LoadLibrary(Path.Combine(AppDir, "WebView2Loader.dll"));   // later DllImport("WebView2Loader.dll") binds to this module
+            return Path.Combine(dir, "prototype");
+        }
+        catch (Exception ex) { Log.Write("Unpacking app files failed: " + ex); return null; }
     }
 }
 
@@ -102,7 +167,7 @@ static class Log
     }
 }
 
-// The user's own wallpaper image: copied into %LOCALAPPDATA%\DynamicIsland\wallpaper and served as https://wall.local/<name>
+// The user's own wallpaper image: copied into %LOCALAPPDATA%\DynamicGlow\wallpaper and served as https://wall.local/<name>
 static class WallpaperImage
 {
     static readonly string[] Exts = { ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".avif", ".jfif" };
@@ -158,7 +223,7 @@ static class WallpaperImage
     public static string Import(string src)
     {
         string ext = Path.GetExtension(src).ToLowerInvariant();
-        if (Array.IndexOf(Exts, ext) < 0) { MessageBox.Show("Please choose an image file (JPG, PNG, WebP, BMP, GIF, AVIF).", "Dynamic Island"); return null; }
+        if (Array.IndexOf(Exts, ext) < 0) { MessageBox.Show("Please choose an image file (JPG, PNG, WebP, BMP, GIF, AVIF).", "Dynamic Glow"); return null; }
         return Store(src, ext, "wallpaper-", false);
     }
 
@@ -225,7 +290,7 @@ static class WallpaperImage
         {
             string[] rgb = BackgroundColor().Split(' ');
             var c = Color.FromArgb(int.Parse(rgb[0]), int.Parse(rgb[1]), int.Parse(rgb[2]));
-            string tmp = Path.Combine(Path.GetTempPath(), "dynamicisland-color.png");
+            string tmp = Path.Combine(Path.GetTempPath(), "dynamicglow-color.png");
             using (var bmp = new Bitmap(16, 16)) { using (var g = Graphics.FromImage(bmp)) g.Clear(c); bmp.Save(tmp, System.Drawing.Imaging.ImageFormat.Png); }
             string name = Store(tmp, ".png", "windows-color-", true);
             try { File.Delete(tmp); } catch { }
@@ -250,7 +315,7 @@ static class WallpaperImage
         catch (Exception ex)
         {
             Log.Write("Wallpaper image import failed: " + ex.Message);
-            if (!quiet) MessageBox.Show("Couldn't use that image:\n" + ex.Message, "Dynamic Island");
+            if (!quiet) MessageBox.Show("Couldn't use that image:\n" + ex.Message, "Dynamic Glow");
             return null;
         }
     }
@@ -263,7 +328,14 @@ static class WallpaperImage
 static class Rename
 {
     const string OldName = "HabitatWallpaper";
-    public static void Migrate() { }   // Dynamic Island has no legacy data to migrate
+    // Settings from the pre-release name (Dynamic Island) move over once.
+    public static void Migrate()
+    {
+        if (InstallProfile.Isolated) return;
+        string oldDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DynamicIsland");
+        try { if (Directory.Exists(oldDir) && !Directory.Exists(Log.DataDir)) { Directory.Move(oldDir, Log.DataDir); Log.Write("Moved data from " + oldDir); } }
+        catch (Exception ex) { Log.Write("Moving old data failed: " + ex.Message); }
+    }
 
     static void MigrateLegacy()
     {
@@ -366,7 +438,7 @@ static class Json
 }
 
 // 用户设置：当前主题 + 每个主题的参数（只存用户改过的，没改过的用主题默认值）
-// Stored in %LOCALAPPDATA%\DynamicIsland\settings.json
+// Stored in %LOCALAPPDATA%\DynamicGlow\settings.json
 static class Settings
 {
     static readonly string FilePath = Path.Combine(Log.DataDir, "settings.json");
@@ -458,7 +530,7 @@ static class I18n
 // 打开设置的方式：双击程序（没运行就先启动再打开）、双击托盘图标、菜单 → 设置…（或 --settings）
 class HostContext : ApplicationContext
 {
-    public const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run", RunName = "DynamicIsland";
+    public const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run", RunName = "DynamicGlow";
     static readonly MethodInfo ShowTrayMenu =
         typeof(NotifyIcon).GetMethod("ShowContextMenu", BindingFlags.Instance | BindingFlags.NonPublic);
 
@@ -521,7 +593,7 @@ class HostContext : ApplicationContext
 
         tray = new NotifyIcon();
         tray.Icon = AppIcon.Create();
-        tray.Text = "Dynamic Island";
+        tray.Text = "Dynamic Glow";
         tray.ContextMenu = new ContextMenu(new[] {
             settingsItem,
             pauseItem,
@@ -770,9 +842,9 @@ class HostContext : ApplicationContext
         {
             int comma = png.IndexOf(',');
             byte[] bytes = Convert.FromBase64String(comma >= 0 ? png.Substring(comma + 1) : png);
-            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Dynamic Island");
+            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Dynamic Glow");
             Directory.CreateDirectory(dir);
-            string path = Path.Combine(dir, "Dynamic Island " + DateTime.Now.ToString("yyyy-MM-dd HHmmss") + ".png");
+            string path = Path.Combine(dir, "Dynamic Glow " + DateTime.Now.ToString("yyyy-MM-dd HHmmss") + ".png");
             File.WriteAllBytes(path, bytes);
             lastShare = path;
             try
@@ -810,9 +882,9 @@ class HostContext : ApplicationContext
         {
             int comma = video.IndexOf(',');
             byte[] bytes = Convert.FromBase64String(comma >= 0 ? video.Substring(comma + 1) : video);
-            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Dynamic Island");
+            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Dynamic Glow");
             Directory.CreateDirectory(dir);
-            string name = "Dynamic Island " + DateTime.Now.ToString("yyyy-MM-dd HHmmss") + (mime == "video/webm" ? ".webm" : ".mp4");
+            string name = "Dynamic Glow " + DateTime.Now.ToString("yyyy-MM-dd HHmmss") + (mime == "video/webm" ? ".webm" : ".mp4");
             string path = Path.Combine(dir, name);
             File.WriteAllBytes(path, bytes);
             lastShare = path;
@@ -865,7 +937,7 @@ class HostContext : ApplicationContext
     // 不使用需要额外权限的任务计划；快捷方式创建失败时仍保留 Run 项作为回退。
     static string AutoStartShortcutPath
     {
-        get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Dynamic Island.lnk"); }
+        get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Dynamic Glow.lnk"); }
     }
 
     static object OpenAutoStartShortcut()
@@ -912,7 +984,7 @@ class HostContext : ApplicationContext
             link.GetType().InvokeMember("IconLocation", BindingFlags.SetProperty,
                 null, link, new object[] { Application.ExecutablePath + ",0" });
             link.GetType().InvokeMember("Description", BindingFlags.SetProperty,
-                null, link, new object[] { "Dynamic Island" });
+                null, link, new object[] { "Dynamic Glow" });
             link.GetType().InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
             return File.Exists(AutoStartShortcutPath);
         }
@@ -1002,7 +1074,7 @@ class HostContext : ApplicationContext
         if (restarts.Count > 5)
         {
             Log.Write("壁纸窗口 1 分钟内被销毁超过 5 次，停止重试");
-            MessageBox.Show(I18n.T("errRebuilt") + "\n\n" + I18n.T("errSeeLog", "path", Log.FilePath), "Dynamic Island");
+            MessageBox.Show(I18n.T("errRebuilt") + "\n\n" + I18n.T("errSeeLog", "path", Log.FilePath), "Dynamic Glow");
             Exit();
             return;
         }
@@ -1074,7 +1146,8 @@ static class AppIcon
 {
     public static Icon Create()
     {
-        return new Icon(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DynamicIsland.ico"));
+        string ico = Path.Combine(Payload.AppDir ?? AppDomain.CurrentDomain.BaseDirectory, "DynamicGlow.ico");
+        return File.Exists(ico) ? new Icon(ico) : Icon.ExtractAssociatedIcon(Application.ExecutablePath);
     }
 
     static GraphicsPath RoundRect(Rectangle r, int radius)
@@ -1101,8 +1174,8 @@ class SettingsForm : Form
     {
         this.pageDir = pageDir;
         this.host = host;
-        Text = "Dynamic Island";
-        AccessibleName = "Dynamic Island";
+        Text = "Dynamic Glow";
+        AccessibleName = "Dynamic Glow";
         ShowIcon = true;
         Icon = AppIcon.Create();
         StartPosition = FormStartPosition.CenterScreen;
@@ -1167,7 +1240,7 @@ class SettingsForm : Form
         catch (Exception ex)
         {
             Log.Write("设置窗口启动失败：" + ex);
-            MessageBox.Show(I18n.T("errSettings", "msg", ex.Message), "Dynamic Island");
+            MessageBox.Show(I18n.T("errSettings", "msg", ex.Message), "Dynamic Glow");
             Close();
         }
     }
@@ -1218,7 +1291,7 @@ class WallpaperForm : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         BackColor = Color.FromArgb(26, 163, 196);
-        Text = "DynamicIslandWindow";
+        Text = "DynamicGlowWindow";
 
         web = new WebView2();
         web.Dock = DockStyle.Fill;
@@ -1385,7 +1458,7 @@ class WallpaperForm : Form
     void Fail(string msg)
     {
         Log.Write(msg);
-        MessageBox.Show(msg + "\n\n" + I18n.T("errSeeLog", "path", Log.FilePath), "Dynamic Island");
+        MessageBox.Show(msg + "\n\n" + I18n.T("errSeeLog", "path", Log.FilePath), "Dynamic Glow");
         Fatal = true;
         Shutdown();
     }
@@ -1680,6 +1753,7 @@ static class Native
     public const uint LWA_ALPHA = 0x2, SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002;
     public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
     public const int SW_SHOW = 5, SW_RESTORE = 9;
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr LoadLibrary(string path);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SystemParametersInfo(uint action, uint param, StringBuilder sb, uint winIni);
     [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h, int id, uint modifiers, uint vk);
     [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int val, int size);
@@ -1732,25 +1806,25 @@ static class Native
     [DllImport("kernel32.dll")] public static extern bool ReadProcessMemory(IntPtr proc, IntPtr addr, out RECT buf, int size, out IntPtr read);
 }
 
-// Dynamic Island has its own data and instance identity; isolated profiles support installation QA.
+// Dynamic Glow has its own data and instance identity; isolated profiles support installation QA.
 static class InstallProfile
 {
-    public static readonly string Override = Environment.GetEnvironmentVariable("DYNAMICISLAND_PROFILE_DIR");
+    public static readonly string Override = Environment.GetEnvironmentVariable("DYNAMICGLOW_PROFILE_DIR");
     public static readonly bool Isolated = !string.IsNullOrEmpty(Override);
     public static readonly string DataDir = Isolated ? Path.GetFullPath(Override) : Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DynamicIsland");
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DynamicGlow");
     public static readonly string Suffix = MakeSuffix();
     static string MakeSuffix()
     {
-        if (!Isolated) return "_DI";
+        if (!Isolated) return "_DG";
         using (var hash = System.Security.Cryptography.SHA256.Create())
-            return "_DI_" + BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(DataDir.ToUpperInvariant()))).Replace("-", "").Substring(0, 24);
+            return "_DG_" + BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(DataDir.ToUpperInvariant()))).Replace("-", "").Substring(0, 24);
     }
 
     // An installer may only close the instance using this exact executable path.
     public static int StopInstalled()
     {
-        foreach (Process process in Process.GetProcessesByName("DynamicIsland"))
+        foreach (Process process in Process.GetProcessesByName("DynamicGlow"))
         {
             using (process)
             {

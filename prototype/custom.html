@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dynamic Island · My Wallpaper</title>
+<title>Dynamic Glow · My Wallpaper</title>
 <!--
-  Dynamic Island · "My Wallpaper" theme (2D canvas)
-  - Shows the user's own image (chosen in Settings; the host copies it to %LOCALAPPDATA%\DynamicIsland\wallpaper
+  Dynamic Glow · "My Wallpaper" theme (2D canvas)
+  - Shows the user's own image (chosen in Settings; the host copies it to %LOCALAPPDATA%\DynamicGlow\wallpaper
     and serves it as https://wall.local/<name>).
   - Adaptive: a soft mask follows the real desktop icons; inside it the image is frosted / shadowed / glowing.
     When icons move, the old and new masks cross-fade.
@@ -44,10 +44,10 @@ const KEYS = ['image', 'fit', 'effect', 'strength', 'sigma', 'dim', 'motion', 'a
 const OPTION_MAX = { fit: 3, effect: 3, motion: 2, adaptive: 1 };
 
 const cv = document.getElementById('art');
-const ctx = cv.getContext('2d');
+const ctx = cv.getContext('2d', { alpha: false });   // opaque: the compositor can skip blending
 let W = innerWidth, H = innerHeight;
 let icons = [];
-let paused = false, frameN = 0, cacheOK = false, dirty = true;
+let frameN = 0, cacheOK = false, dirty = true;
 let imageUrl = '';                   // browser-only override (blob: URL from the settings page)
 let img = null, imgReady = false;
 let base = null, fx = null, zoom = 1;
@@ -64,12 +64,15 @@ function imageSrc() {
 }
 function loadImage() {
   const src = imageSrc();
-  imgReady = false; img = null; cacheOK = false; dirty = true;
+  imgReady = false; img = null; cacheOK = false; dirty = need();
   if (!src) return;
   const im = new Image();
   im.decoding = 'async';
   if (src.startsWith('https://wall.local/')) im.crossOrigin = 'anonymous';
-  im.onload = () => { if (img !== im) return; imgReady = true; cacheOK = false; dirty = true; };
+  im.onload = () => {
+    const ready = () => { if (img !== im) return; imgReady = true; cacheOK = false; dirty = need(); };
+    im.decode ? im.decode().then(ready, ready) : ready();   // decode off the main thread before the first draw
+  };
   im.onerror = () => { if (img === im) img = null; };
   img = im;
   im.src = src;
@@ -154,11 +157,11 @@ function currentMask() { return mask || maskNew; }
 // New icon layout: cross-fade from whatever is showing now to the new mask.
 function commit(instant) {
   const next = buildMask(P.adaptive ? icons : []);
-  if (instant) { maskOld = null; maskNew = next; mask = null; morphing = false; dirty = true; return; }
+  if (instant) { maskOld = null; maskNew = next; mask = null; morphing = false; dirty = need(); return; }
   maskOld = currentMask() ? copyOf(currentMask()) : null;
   maskNew = next;
   morphMs = maskOld ? MORPH_MS : FADE_IN_MS;
-  morphT0 = performance.now(); morphing = true; dirty = true;
+  morphT0 = performance.now(); morphing = true; dirty = need();
 }
 function copyOf(c) { const d = canvas(c.width, c.height); d.getContext('2d').drawImage(c, 0, 0); return d; }
 function blendMasks(k) {
@@ -201,16 +204,16 @@ function compose(now) {
 }
 
 // share.js wraps this function while recording, so it must stay a reassignable global.
-function draw(now) {
+function drawFrame(now) {
   frameN++;
-  if (!cacheOK) { buildCaches(); maskNew = buildMask(P.adaptive ? icons : []); maskOld = null; morphing = false; cacheOK = true; dirty = true; }
+  if (!cacheOK) { buildCaches(); maskNew = buildMask(P.adaptive ? icons : []); maskOld = null; morphing = false; cacheOK = true; dirty = need(); }
   if (morphing) {
     const k = Math.min(1, (now - morphT0) / morphMs);
     blendMasks(smooth(Math.max(0, k)));
     if (k >= 1) { morphing = false; maskOld = null; mask = null; }
-    dirty = true;
+    dirty = need();
   }
-  if (P.motion) dirty = true;
+  if (P.motion) dirty = need();
   if (!dirty) return;
   dirty = false;
   compose(now);
@@ -220,20 +223,26 @@ function resize() {
   const s = window.devicePixelRatio || 1, box = cv.getBoundingClientRect();
   W = box.width || innerWidth; H = box.height || innerHeight;
   cv.width = Math.round(W * s); cv.height = Math.round(H * s); cv._scale = s;
-  cacheOK = false; dirty = true;
+  cacheOK = false; dirty = need();
+}
+/* ---------- on-demand frame loop ----------
+   Frames run only while something changes (motion, icon morph, new settings/image), so an idle wallpaper costs ~0 CPU/GPU.
+   share.js assigns `paused` and `draw` and then counts frameN, so both are accessors that wake the loop. */
+let pausedV = false, drawImpl = drawFrame, rafId = 0, lastFrame = 0, warmUntil = 0;
+function need() { if (!rafId && !pausedV) rafId = requestAnimationFrame(frame); return true; }
+Object.defineProperty(window, 'paused', { get: () => pausedV, set: v => { pausedV = !!v; if (!pausedV) { warmUntil = performance.now() + 1200; need(); } } });
+Object.defineProperty(window, 'draw', { get: () => drawImpl, set: fn => { drawImpl = fn; need(); } });
+function frame(now) {
+  rafId = 0;
+  if (pausedV) return;
+  const hooked = drawImpl !== drawFrame;              // share.js is recording
+  if (P.motion && P.cap30 && !hooked && now - lastFrame < 31) { need(); return; }
+  lastFrame = now;
+  drawImpl(now);
+  if (hooked || now < warmUntil) need();
 }
 addEventListener('resize', resize);
 resize();
-
-let lastFrame = 0;
-function frame(now) {
-  requestAnimationFrame(frame);
-  if (paused) return;
-  if (P.motion && P.cap30 && now - lastFrame < 31) return;
-  lastFrame = now;
-  draw(now);
-}
-requestAnimationFrame(frame);
 
 /* ---------- hosted mode: wallpaper (?wallpaper=1, WebView2 host) or preview (?preview=1, settings iframe) ---------- */
 function applySettings(v) {
@@ -253,7 +262,7 @@ function applySettings(v) {
   if (rebuild) cacheOK = false;
   if (adaptiveChanged) commit();
   else if (remask && cacheOK) commit(true);
-  dirty = true;
+  dirty = need();
 }
 
 function drawGhosts() {
@@ -264,14 +273,14 @@ function drawGhosts() {
 function startHostedMode() {
   if (PREVIEW) document.body.classList.add('preview');
   const handle = m => {
-    if (m.t === 'pause') { paused = PREVIEW ? false : !!m.v; dirty = true; return; }
+    if (m.t === 'pause') { paused = PREVIEW ? false : !!m.v; dirty = need(); return; }
     if (m.t === 'settings') { applySettings(m.v || {}); return; }
     if (m.t === 'reset') { applySettings(Object.assign({}, DEFAULTS, { image: P.image }, m.v || {})); return; }
     if (m.t !== 'icons') return;
     const k = window.devicePixelRatio || 1;           // physical pixels → CSS pixels
     icons = m.vis ? m.r.map(([l, t, r, b]) => ({ x: l / k, y: t / k, w: (r - l) / k, h: (b - t) / k })) : [];
     if (PREVIEW) drawGhosts();
-    if (cacheOK) commit(); else dirty = true;
+    if (cacheOK) commit(); else dirty = need();
   };
   if (PREVIEW) {
     addEventListener('message', ev => { if (ev.source === parent) handle(typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data); });

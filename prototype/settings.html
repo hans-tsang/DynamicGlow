@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dynamic Island</title>
+<title>Dynamic Glow</title>
 <!--
-  Dynamic Island settings window
-  - Opened by the desktop host (host/bin/DynamicIsland.exe) in WebView2; opened in a plain browser it uses mock data.
+  Dynamic Glow settings window
+  - Opened by the desktop host (host/bin/DynamicGlow.exe) in WebView2; opened in a plain browser it uses mock data.
   - 主题与参数来自 themes.json，控件按清单自动生成
   - 实时预览：iframe 加载主题页面的 ?preview=1 模式，用你桌面上真实的图标位置
   - 和宿主的消息（JSON 字符串）：
@@ -277,7 +277,7 @@
 <body>
 <header class="top">
   <div class="top-left">
-    <div class="brand">Dynamic Island</div>
+    <div class="brand">Dynamic Glow</div>
     <div class="section-title" data-i18n="themes">Themes</div>
   </div>
   <div class="top-right">
@@ -285,7 +285,7 @@
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M1.8 8h12.4M8 1.8c1.8 1.7 2.7 3.8 2.7 6.2S9.8 12.5 8 14.2C6.2 12.5 5.3 10.4 5.3 8S6.2 3.5 8 1.8z"/></svg>
       <select id="lang" data-i18n-title="language" aria-label="Language" hidden></select>
     </label>
-    <label class="switch-row" data-i18n-title="autostartTitle" title="Run Dynamic Island automatically when you sign in">
+    <label class="switch-row" data-i18n-title="autostartTitle" title="Run Dynamic Glow automatically when you sign in">
       <span data-i18n="autostart">Start with Windows</span><input type="checkbox" id="autostart"><i class="switch"></i>
     </label>
   </div>
@@ -332,7 +332,7 @@
     <div class="purchase-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
     <h3 id="purchaseTitle" data-i18n="purchaseTitle">Get the Wallpaper edition</h3>
     <p class="sub" id="purchaseTheme"></p>
-    <p class="sub" data-i18n="purchaseMessage">The preview includes Beach and Meadow forever. Get the Wallpaper edition to unlock more themes in the same Dynamic Island app.</p>
+    <p class="sub" data-i18n="purchaseMessage">The preview includes Beach and Meadow forever. Get the Wallpaper edition to unlock more themes in the same Dynamic Glow app.</p>
     <div class="actions">
       <button class="ghost-btn" id="purchaseLater" data-i18n="purchaseLater">Keep exploring</button>
       <button class="ghost-btn primary" id="purchaseWebsite" data-i18n="purchaseWebsite">Visit website</button>
@@ -350,7 +350,7 @@
     <div class="actions">
       <button class="ghost-btn" id="shareReveal" data-i18n="openFolder">Show in folder</button>
       <button class="ghost-btn" id="shareOpen">Open image</button>
-      <a class="ghost-btn" id="shareDownload" hidden download="Dynamic Island.png">Save image</a>
+      <a class="ghost-btn" id="shareDownload" hidden download="Dynamic Glow.png">Save image</a>
       <button class="ghost-btn primary" id="shareClose" data-i18n="ok">OK</button>
     </div>
   </div>
@@ -362,12 +362,12 @@
     <h3 id="helpTitle" data-i18n="helpTitle">Help</h3>
     <p class="sub" data-i18n="helpSubtitle">Common questions and troubleshooting</p>
     <section class="help-article">
-      <h4 data-i18n="helpWallpaperQ">Dynamic Island keeps flickering or restarting. How do I fix it?</h4>
-      <p data-i18n="helpWallpaperA">If your regular Windows wallpaper changes automatically, each change can make Dynamic Island flicker or restart. Use a fixed background that does not rotate.</p>
+      <h4 data-i18n="helpWallpaperQ">Dynamic Glow keeps flickering or restarting. How do I fix it?</h4>
+      <p data-i18n="helpWallpaperA">If your regular Windows wallpaper changes automatically, each change can make Dynamic Glow flicker or restart. Use a fixed background that does not rotate.</p>
       <ol>
         <li data-i18n="helpWallpaperStep1">Open Windows Settings → Personalization → Background.</li>
         <li data-i18n="helpWallpaperStep2">Set ‘Personalize your background’ to ‘Picture’ or ‘Solid color’. Do not use ‘Slideshow’ or ‘Windows spotlight’.</li>
-        <li data-i18n="helpWallpaperStep3">Restart Dynamic Island after changing this setting.</li>
+        <li data-i18n="helpWallpaperStep3">Restart Dynamic Glow after changing this setting.</li>
       </ol>
     </section>
     <div class="actions"><button class="ghost-btn primary" id="helpDone" data-i18n="gotIt">Got it</button></div>
@@ -768,7 +768,7 @@ function showShare(r) {
   if (!inHost) {
     $('shareDownload').href = r.full;
     $('shareDownload').textContent = t(video ? 'saveVideo' : 'saveImage');
-    $('shareDownload').download = 'Dynamic Island.' + (video ? (r.ext || 'mp4') : 'png');
+    $('shareDownload').download = 'Dynamic Glow.' + (video ? (r.ext || 'mp4') : 'png');
   }
   $('shareModal').hidden = false;
   $('shareClose').focus();

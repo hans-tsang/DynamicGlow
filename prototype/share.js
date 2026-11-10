@@ -1,4 +1,4 @@
-// Dynamic Island · one-click share (shared by theme pages; load after the theme script)
+// Dynamic Glow · one-click share (shared by theme pages; load after the theme script)
 // 把当前画面按屏幕的实际像素重新画一张，再在每个图标的位置画一个示例图标（文件夹、文档、图片、应用），
 // 名字画成白色的圆角色块。不截屏：图标的样子和文件名一概不读，只用位置（是哪种图标、名字多长都是按位置随机编的），
 // 所以图里不会露出任何文件名；设置窗口、别的窗口挡着桌面也没关系。
