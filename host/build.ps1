@@ -1,5 +1,5 @@
 ﻿# Build Dynamic Glow from source with the .NET Framework C# compiler that ships with Windows.
-# -Release also writes dist\DynamicGlow.exe (single file, compressed payload) and a zip for GitHub releases.
+# -Release also writes dist\DynamicGlow-<version>-win-x64.zip (portable folder) for GitHub releases.
 param([switch]$Release)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -54,47 +54,38 @@ using System.Reflection;
 [assembly: AssemblyCopyright("Copyright 2026 Deskland authors and Dynamic Glow contributors")]
 "@
 [IO.File]::WriteAllText($versionSource, $versionText, (New-Object Text.UTF8Encoding($false)))
-# Pages + WebView2 DLLs + icon, deflate-compressed, embedded in the exe (unpacked on first run; see Payload in DesktopHost.cs).
-Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
-$payload = Join-Path $bin 'payload.zip'
-if (Test-Path -LiteralPath $payload) { Remove-Item -LiteralPath $payload -Force }
-$zip = [IO.Compression.ZipFile]::Open($payload, 'Create')
-try {
-    $proto = Join-Path $root '..\prototype'
-    foreach ($f in @('custom.html', 'settings.html', 'share.js', 'themes.json', 'i18n\en.json')) {
-        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $proto $f), 'prototype/' + $f.Replace('\', '/'), 'Optimal')
-    }
-    foreach ($assembly in $assemblies) { [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $lib $assembly.Name), $assembly.Name, 'Optimal') }
-    [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $root 'DynamicGlow.ico'), 'DynamicGlow.ico', 'Optimal')
-} finally { $zip.Dispose() }
 & $csc /nologo /target:winexe /platform:x64 /optimize+ /debug- /codepage:65001 /win32manifest:"$root\app.manifest" `
     /win32icon:"$root\DynamicGlow.ico" `
     /out:"$bin\DynamicGlow.exe" `
-    "/resource:$payload,payload.zip" `
-    /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:System.IO.Compression.dll `
+    /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:Accessibility.dll `
     /r:"$lib\Microsoft.Web.WebView2.Core.dll" /r:"$lib\Microsoft.Web.WebView2.WinForms.dll" `
     "$root\DesktopHost.cs" "$root\Themes.cs" "$versionSource"
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 foreach ($assembly in $assemblies) { Copy-Item -LiteralPath (Join-Path $lib $assembly.Name) -Destination $bin -Force }
 Copy-Item -LiteralPath (Join-Path $root 'DynamicGlow.ico') -Destination (Join-Path $bin 'DynamicGlow.ico') -Force
-Write-Host "Built: $bin\DynamicGlow.exe ($([math]::Round((Get-Item "$bin\DynamicGlow.exe").Length / 1KB)) KB, payload $([math]::Round((Get-Item $payload).Length / 1KB)) KB)"
+Remove-Item -LiteralPath (Join-Path $bin 'payload.zip') -Force -ErrorAction SilentlyContinue
+Write-Host "Built: $bin\DynamicGlow.exe"
 
+# -Release: portable folder (exe + WebView2 DLLs + icon + pages) packed into one deflate-compressed zip.
+# Plain files only - no self-extracting exe, which antivirus heuristics tend to flag.
 if ($Release) {
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
     $dist = Join-Path $root '..\dist'
     New-Item -ItemType Directory -Force $dist | Out-Null
     $dist = (Resolve-Path $dist).Path
-    Get-ChildItem -LiteralPath $dist -File | Remove-Item -Force
-    Copy-Item -LiteralPath "$bin\DynamicGlow.exe" -Destination (Join-Path $dist 'DynamicGlow.exe')
+    Get-ChildItem -LiteralPath $dist | Remove-Item -Recurse -Force
+    $files = [ordered]@{ 'DynamicGlow.exe' = "$bin\DynamicGlow.exe"; 'DynamicGlow.ico' = "$root\DynamicGlow.ico" }
+    foreach ($assembly in $assemblies) { $files[$assembly.Name] = Join-Path $lib $assembly.Name }
+    foreach ($f in @('custom.html', 'settings.html', 'share.js', 'themes.json', 'i18n\en.json')) { $files['pages\' + $f] = Join-Path $root "..\prototype\$f" }
+    foreach ($f in @('LICENSE', 'NOTICE', 'README.md', 'THIRD_PARTY_NOTICES.md')) { $files[$f] = Join-Path $root "..\$f" }
     $zipPath = Join-Path $dist "DynamicGlow-$appVersion-win-x64.zip"
     $z = [IO.Compression.ZipFile]::Open($zipPath, 'Create')
     try {
-        foreach ($f in @('host\bin\DynamicGlow.exe', 'LICENSE', 'NOTICE', 'README.md', 'THIRD_PARTY_NOTICES.md')) {
-            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, (Join-Path $root "..\$f"), (Split-Path $f -Leaf), 'Optimal')
+        foreach ($k in $files.Keys) {
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $files[$k], 'DynamicGlow/' + $k.Replace('\', '/'), 'Optimal')
         }
     } finally { $z.Dispose() }
-    Get-ChildItem -LiteralPath $dist -File | ForEach-Object {
-        $h = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        "$h  $($_.Name)"
-    } | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ascii
-    Write-Host "Release files in $dist"
+    $h = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    "$h  $(Split-Path $zipPath -Leaf)" | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ascii
+    Write-Host "Release: $zipPath ($([math]::Round((Get-Item $zipPath).Length / 1KB)) KB)"
 }

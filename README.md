@@ -13,7 +13,9 @@ Dynamic Glow is a personal fork of [Deskland](https://github.com/BLEZZ0102/Deskl
 
 ## Download
 
-Get **DynamicGlow.exe** from the [latest release](https://github.com/hans-tsang/DynamicGlow/releases/latest) and run it - no installer needed. It is a single ~360 KB file: the pages and WebView2 libraries are embedded deflate-compressed and unpacked once to `%LOCALAPPDATA%\DynamicGlow\app\`. Windows SmartScreen may warn because the exe is unsigned; choose *More info > Run anyway*. `SHA256SUMS.txt` in each release lists the file hashes.
+Download **DynamicGlow-<version>-win-x64.zip** from the [latest release](https://github.com/hans-tsang/DynamicGlow/releases/latest), extract the whole zip to a folder (for example `%LOCALAPPDATA%\Programs\DynamicGlow`) and run `DynamicGlow.exe` - no installer needed. Keep the DLLs and the `pages` folder next to the exe. Windows SmartScreen may warn because the exe is unsigned; choose *More info > Run anyway*. `SHA256SUMS.txt` in each release lists the zip hash.
+
+The app reads desktop icon positions through the Windows accessibility interface (the one screen readers use) and never reads or writes another program's memory, so behaviour-based antivirus (e.g. Bitdefender Advanced Threat Defense) has nothing to flag. Versions before 0.2.3 used the older cross-process memory method and could be blocked.
 
 ## Fast and smooth
 

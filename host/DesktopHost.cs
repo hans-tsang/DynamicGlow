@@ -63,21 +63,49 @@ static class Program
         if (!Native.SetProcessDpiAwarenessContext(new IntPtr(-4))) Native.SetProcessDPIAware();
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        // Log anything unexpected; no message boxes and no silent exits
+        // Log anything unexpected; a crash that would end the app is also shown, never a silent exit
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += delegate(object s, ThreadExceptionEventArgs e) { Log.Write("Unhandled exception: " + e.Exception); };
-        AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs e) { Log.Write("Fatal exception: " + e.ExceptionObject); };
-        Rename.Migrate();
-        string pageDir = Payload.Prepare();
-        if (pageDir == null) { MessageBox.Show("Dynamic Glow couldn't unpack its files. See host.log in %LOCALAPPDATA%\\DynamicGlow.", "Dynamic Glow"); return; }
-        Run(args, pageDir);
+        AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs e) { FatalError(e.ExceptionObject as Exception); };
+        string missing = AppFiles.Missing();
+        if (missing != null)
+        {
+            Log.Write("Missing app file: " + missing);
+            MessageBox.Show("Dynamic Glow is missing \"" + missing + "\" next to DynamicGlow.exe.\n\n" +
+                "Extract the whole zip into a folder (don't run the exe from inside the zip). If an antivirus removed a file, restore it or allow the folder, then try again.",
+                "Dynamic Glow", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+        try
+        {
+            Rename.Migrate();
+            Run(args, AppFiles.FindPages());
+        }
+        catch (Exception ex) { FatalError(ex); }
         GC.KeepAlive(mutex);
     }
 
-    // Kept out of Main so no WebView2 type is touched before Payload.Prepare() has set up assembly resolution.
+    static void FatalError(Exception ex)
+    {
+        Log.Write("Fatal exception: " + ex);
+        MessageBox.Show("Dynamic Glow stopped because of an error:\n\n" + (ex == null ? "unknown error" : ex.Message) +
+            "\n\nDetails are in " + Log.FilePath, "Dynamic Glow", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+
+    // Kept out of Main so a missing WebView2 DLL is reported by the check above rather than failing when Main is compiled.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     static void Run(string[] args, string pageDir)
     {
+        string runtime = null;
+        try { runtime = Microsoft.Web.WebView2.Core.CoreWebView2Environment.GetAvailableBrowserVersionString(); } catch (Exception ex) { Log.Write("WebView2 runtime check: " + ex.Message); }
+        if (string.IsNullOrEmpty(runtime))
+        {
+            Log.Write("WebView2 Runtime not found");
+            if (MessageBox.Show("Dynamic Glow needs the Microsoft Edge WebView2 Runtime, which isn't installed on this PC.\n\nOpen the download page now? (Choose \"Evergreen Bootstrapper\", install it, then start Dynamic Glow again.)",
+                    "Dynamic Glow", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                try { Process.Start("https://developer.microsoft.com/microsoft-edge/webview2/#download"); } catch { }
+            return;
+        }
         // 24H2+ attach mode: by default a layered child of Progman (flickers briefly when the system wallpaper changes);
         //   --defview: inside the icon layer, below the icon list (experimental: does not render in practice); --legacy: inside WorkerW (destroyed along with it when the wallpaper changes)
         string attach = "progman";
@@ -94,60 +122,27 @@ static class Program
     }
 }
 
-// Single-file build: build.ps1 embeds payload.zip (pages + WebView2 DLLs + icon, deflate-compressed) in the exe.
-// It is unpacked once per build into %LOCALAPPDATA%\DynamicGlow\app\<hash>. A development build (exe in host\bin next to the
-// DLLs, pages in ..\..\prototype) runs in place.
-static class Payload
+// Portable layout: DynamicGlow.exe, the WebView2 DLLs and the icon in one folder, pages in its "pages" subfolder.
+// A development build (exe in host\bin) uses the pages in ..\..\prototype. Nothing is unpacked or loaded from elsewhere.
+static class AppFiles
 {
-    public static string AppDir;                       // where the DLLs and icon live
+    public static readonly string AppDir = AppDomain.CurrentDomain.BaseDirectory;
 
-    public static string Prepare()
+    public static string FindPages()
     {
-        string exeDir = AppDomain.CurrentDomain.BaseDirectory;
-        string devPages = Path.GetFullPath(Path.Combine(exeDir, @"..\..\prototype"));
-        var res = Assembly.GetExecutingAssembly().GetManifestResourceStream("payload.zip");
-        if (res == null || (File.Exists(Path.Combine(devPages, "settings.html")) && File.Exists(Path.Combine(exeDir, "Microsoft.Web.WebView2.Core.dll"))))
+        foreach (string rel in new[] { "pages", @"..\..\prototype" })
         {
-            AppDir = exeDir;
-            return devPages;
+            string dir = Path.GetFullPath(Path.Combine(AppDir, rel));
+            if (File.Exists(Path.Combine(dir, "settings.html"))) return dir;
         }
-        try
-        {
-            byte[] zip;
-            using (res) { zip = new byte[res.Length]; int n = 0; while (n < zip.Length) n += res.Read(zip, n, zip.Length - n); }
-            string hash;
-            using (var sha = System.Security.Cryptography.SHA1.Create()) hash = BitConverter.ToString(sha.ComputeHash(zip)).Replace("-", "").Substring(0, 12);
-            string root = Path.Combine(Log.DataDir, "app"), dir = Path.Combine(root, hash), done = Path.Combine(dir, ".ok");
-            if (!File.Exists(done))
-            {
-                string tmp = dir + ".tmp" + Process.GetCurrentProcess().Id;
-                if (Directory.Exists(tmp)) Directory.Delete(tmp, true);
-                using (var a = new System.IO.Compression.ZipArchive(new MemoryStream(zip)))
-                    foreach (var e in a.Entries)
-                    {
-                        if (e.FullName.EndsWith("/")) continue;
-                        string target = Path.GetFullPath(Path.Combine(tmp, e.FullName));
-                        if (!target.StartsWith(tmp + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
-                        Directory.CreateDirectory(Path.GetDirectoryName(target));
-                        using (var src = e.Open()) using (var dst = File.Create(target)) src.CopyTo(dst);
-                    }
-                File.WriteAllText(Path.Combine(tmp, ".ok"), hash);
-                if (Directory.Exists(dir)) Directory.Delete(dir, true);
-                Directory.Move(tmp, dir);
-                Log.Write("Unpacked app files to " + dir);
-                foreach (string old in Directory.GetDirectories(root))           // drop files from older versions
-                    if (!string.Equals(old, dir, StringComparison.OrdinalIgnoreCase)) try { Directory.Delete(old, true); } catch { }
-            }
-            AppDir = dir + Path.DirectorySeparatorChar;
-            AppDomain.CurrentDomain.AssemblyResolve += delegate(object s, ResolveEventArgs e)
-            {
-                string file = Path.Combine(AppDir, new AssemblyName(e.Name).Name + ".dll");
-                return File.Exists(file) ? Assembly.LoadFrom(file) : null;
-            };
-            Native.LoadLibrary(Path.Combine(AppDir, "WebView2Loader.dll"));   // later DllImport("WebView2Loader.dll") binds to this module
-            return Path.Combine(dir, "prototype");
-        }
-        catch (Exception ex) { Log.Write("Unpacking app files failed: " + ex); return null; }
+        return null;
+    }
+
+    public static string Missing()
+    {
+        foreach (string dll in new[] { "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" })
+            if (!File.Exists(Path.Combine(AppDir, dll))) return dll;
+        return FindPages() == null ? "pages" : null;
     }
 }
 
@@ -1146,7 +1141,7 @@ static class AppIcon
 {
     public static Icon Create()
     {
-        string ico = Path.Combine(Payload.AppDir ?? AppDomain.CurrentDomain.BaseDirectory, "DynamicGlow.ico");
+        string ico = Path.Combine(AppFiles.AppDir, "DynamicGlow.ico");
         return File.Exists(ico) ? new Icon(ico) : Icon.ExtractAssociatedIcon(Application.ExecutablePath);
     }
 
@@ -1268,6 +1263,12 @@ class WallpaperForm : Form
     readonly System.Windows.Forms.Timer iconTimer, fgTimer;
     readonly string pageDir;
     readonly IconReader reader = new IconReader();
+    // Icons are re-read only when Explorer reports a change on the icon list (plus a slow safety poll):
+    // each accessibility query is a cross-process call, too costly to repeat for every icon several times a second.
+    IntPtr iconHook, hookedListView;
+    Native.WinEventDelegate iconEventProc;
+    bool iconsDirty = true;
+    int lastIconRead;
     Rectangle screen;
     IntPtr parentHwnd, insertAfter;
     string lastIcons = "";
@@ -1440,7 +1441,7 @@ class WallpaperForm : Form
                 if (msg != null && msg.StartsWith("recprogress|")) { if (RecordProgress != null) RecordProgress(msg.Substring(12)); return; }
                 if (msg != null && msg.StartsWith("record|")) { OnRecord(msg); return; }
                 if (SettingsJson != null) core.PostWebMessageAsString(SettingsJson());
-                lastIcons = ""; lastPause = -1; PollIcons(); PollForeground();
+                lastIcons = ""; lastPause = -1; iconsDirty = true; PollIcons(); PollForeground();
             };
             core.Navigate(PageUrl);
             iconTimer.Start();
@@ -1603,9 +1604,13 @@ class WallpaperForm : Form
     {
         EnsureZOrder();
         if (web.CoreWebView2 == null) return;
+        if (!iconsDirty && hookedListView != IntPtr.Zero && Native.IsWindow(hookedListView) && Environment.TickCount - lastIconRead < 5000) return;
+        iconsDirty = false;
+        lastIconRead = Environment.TickCount;
         bool visible;
         List<Native.RECT> rects = reader.Read(out visible);
         if (rects == null) return;
+        if (reader.ListView != hookedListView) HookIconList();
         var sb = new StringBuilder();
         sb.Append("{\"t\":\"icons\",\"vis\":").Append(visible ? "true" : "false").Append(",\"r\":[");
         for (int i = 0; i < rects.Count; i++)
@@ -1622,6 +1627,28 @@ class WallpaperForm : Form
         if (IconsChanged != null) IconsChanged(json);
         Post(json);
         Log.Write(string.Format("Icons changed: {0}, visible={1}", rects.Count, visible));
+    }
+
+    void HookIconList()
+    {
+        UnhookIconList();
+        hookedListView = reader.ListView;
+        if (hookedListView == IntPtr.Zero) return;
+        uint pid;
+        Native.GetWindowThreadProcessId(hookedListView, out pid);
+        if (iconEventProc == null)
+            iconEventProc = delegate(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
+            {
+                if (hwnd == hookedListView) iconsDirty = true;
+            };
+        // OBJECT_CREATE .. OBJECT_LOCATIONCHANGE: icons added, removed, renamed, moved or rearranged
+        iconHook = Native.SetWinEventHook(0x8000, 0x800B, IntPtr.Zero, iconEventProc, pid, 0, 0 /* WINEVENT_OUTOFCONTEXT */);
+    }
+
+    void UnhookIconList()
+    {
+        if (iconHook != IntPtr.Zero) { Native.UnhookWinEvent(iconHook); iconHook = IntPtr.Zero; }
+        hookedListView = IntPtr.Zero;
     }
 
     // ---------------------------------------------------------------- Pause while maximized / fullscreen
@@ -1660,6 +1687,7 @@ class WallpaperForm : Form
         if (shuttingDown) return;
         shuttingDown = true;
         iconTimer.Stop(); fgTimer.Stop();
+        UnhookIconList();
         reader.Dispose();
         IntPtr parent = parentHwnd;
         try { web.Dispose(); } catch { }
@@ -1674,15 +1702,19 @@ class WallpaperForm : Form
     {
         if (winEventHook != IntPtr.Zero) { Native.UnhookWinEvent(winEventHook); winEventHook = IntPtr.Zero; }
         iconTimer.Stop(); fgTimer.Stop();
+        UnhookIconList();
         reader.Dispose();
         base.OnHandleDestroyed(e);
     }
 }
 
-// Read icon rectangles via cross-process messages to the desktop ListView (icon + label, physical pixels, screen coordinates)
+// Read icon rectangles (icon + label, physical pixels, screen coordinates) through the desktop ListView's accessibility
+// interface (MSAA, as screen readers do). Nothing touches Explorer's memory, which antivirus software treats as code injection.
 class IconReader : IDisposable
 {
-    IntPtr listView, proc, mem;
+    IntPtr listView;
+    public IntPtr ListView { get { return listView; } }
+    Accessibility.IAccessible acc;
 
     static IntPtr FindListView()
     {
@@ -1706,42 +1738,41 @@ class IconReader : IDisposable
         Close();
         listView = FindListView();
         if (listView == IntPtr.Zero) return false;
-        uint pid;
-        Native.GetWindowThreadProcessId(listView, out pid);
-        proc = Native.OpenProcess(0x0008 | 0x0010 | 0x0020, false, pid);   // VM_OPERATION | VM_READ | VM_WRITE
-        if (proc == IntPtr.Zero) return false;
-        mem = Native.VirtualAllocEx(proc, IntPtr.Zero, new IntPtr(64), 0x1000 | 0x2000, 0x04);
-        return mem != IntPtr.Zero;
+        Guid iid = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");     // IID_IAccessible
+        object o;
+        if (Native.AccessibleObjectFromWindow(listView, -4 /* OBJID_CLIENT */, ref iid, out o) != 0) return false;
+        acc = o as Accessibility.IAccessible;
+        return acc != null;
     }
 
     public List<Native.RECT> Read(out bool visible)
     {
         visible = false;
-        if (listView == IntPtr.Zero || mem == IntPtr.Zero || !Native.IsWindow(listView)) { if (!Open()) return null; }
+        if (listView == IntPtr.Zero || acc == null || !Native.IsWindow(listView)) { if (!Open()) return null; }
         visible = Native.IsWindowVisible(listView);
         var result = new List<Native.RECT>();
-        if (!visible) return result;                   // User hid desktop icons → all sea
-        int count = (int)Native.SendMessage(listView, 0x1004 /* LVM_GETITEMCOUNT */, IntPtr.Zero, IntPtr.Zero);
-        var origin = new Native.POINT();
-        Native.ClientToScreen(listView, ref origin);
-        for (int i = 0; i < count; i++)
+        if (!visible) return result;                   // User hid desktop icons: no patches
+        try
         {
-            var r = new Native.RECT();                 // Left = LVIR_BOUNDS (0): full bounds of icon + label
-            IntPtr n;
-            if (!Native.WriteProcessMemory(proc, mem, ref r, 16, out n)) { Close(); return null; }
-            Native.SendMessage(listView, 0x100E /* LVM_GETITEMRECT */, new IntPtr(i), mem);
-            if (!Native.ReadProcessMemory(proc, mem, out r, 16, out n)) { Close(); return null; }
-            r.Left += origin.X; r.Right += origin.X; r.Top += origin.Y; r.Bottom += origin.Y;
-            result.Add(r);
+            int count = (int)Native.SendMessage(listView, 0x1004 /* LVM_GETITEMCOUNT */, IntPtr.Zero, IntPtr.Zero);
+            for (int i = 1; i <= count; i++)           // MSAA child ids are 1-based item indexes
+            {
+                int x, y, w, h;
+                acc.accLocation(out x, out y, out w, out h, i);
+                if (w <= 0 || h <= 0) continue;
+                var r = new Native.RECT();
+                r.Left = x; r.Top = y; r.Right = x + w; r.Bottom = y + h;
+                result.Add(r);
+            }
         }
+        catch (Exception) { Close(); return null; }   // Explorer restarted: reconnect next time
         return result;
     }
 
     void Close()
     {
-        if (mem != IntPtr.Zero && proc != IntPtr.Zero) Native.VirtualFreeEx(proc, mem, IntPtr.Zero, 0x8000);
-        if (proc != IntPtr.Zero) Native.CloseHandle(proc);
-        mem = proc = IntPtr.Zero;
+        if (acc != null) { try { Marshal.ReleaseComObject(acc); } catch { } }
+        acc = null;
     }
 
     public void Dispose() { Close(); }
@@ -1753,7 +1784,6 @@ static class Native
     public const uint LWA_ALPHA = 0x2, SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002;
     public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
     public const int SW_SHOW = 5, SW_RESTORE = 9;
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr LoadLibrary(string path);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SystemParametersInfo(uint action, uint param, StringBuilder sb, uint winIni);
     [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h, int id, uint modifiers, uint vk);
     [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int val, int size);
@@ -1777,6 +1807,7 @@ static class Native
 
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("oleacc.dll")] public static extern int AccessibleObjectFromWindow(IntPtr hwnd, int objectId, ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object obj);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
@@ -1798,12 +1829,7 @@ static class Native
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] public static extern bool RedrawWindow(IntPtr h, IntPtr rect, IntPtr rgn, uint flags);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attribute, out int value, int size);
-    [DllImport("kernel32.dll")] public static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
     [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
-    [DllImport("kernel32.dll")] public static extern IntPtr VirtualAllocEx(IntPtr proc, IntPtr addr, IntPtr size, uint type, uint protect);
-    [DllImport("kernel32.dll")] public static extern bool VirtualFreeEx(IntPtr proc, IntPtr addr, IntPtr size, uint type);
-    [DllImport("kernel32.dll")] public static extern bool WriteProcessMemory(IntPtr proc, IntPtr addr, ref RECT buf, int size, out IntPtr written);
-    [DllImport("kernel32.dll")] public static extern bool ReadProcessMemory(IntPtr proc, IntPtr addr, out RECT buf, int size, out IntPtr read);
 }
 
 // Dynamic Glow has its own data and instance identity; isolated profiles support installation QA.

@@ -112,6 +112,7 @@ function buildCaches() {
     }
     placeImage(b, bw, bh, P.fit, s * zoom);
   } else placeholder(b, bw, bh);
+  const lit = P.effect === 3 && P.dim > 0 ? copyOf(base) : base;   // the glow is lit from the undimmed picture
   if (P.dim > 0) { b.fillStyle = `rgba(0,0,0,${P.dim})`; b.fillRect(0, 0, bw, bh); }
 
   fx = null;
@@ -129,11 +130,11 @@ function buildCaches() {
   } else if (P.effect === 2) {                       // shadow: darker, slightly desaturated so labels pop
     f.filter = 'brightness(0.42) saturate(0.85)';
     f.drawImage(base, 0, 0, fw, fh);
-  } else {                                           // glow
-    f.filter = `blur(${Math.round(10 * s * k)}px) brightness(1.35) saturate(1.1)`;
-    f.drawImage(base, -pad, -pad, fw + 2 * pad, fh + 2 * pad);
+  } else {                                           // glow: bright, saturated light from the picture, added with a screen blend
+    f.filter = `blur(${Math.round(14 * s * k)}px) brightness(1.6) saturate(1.35)`;
+    f.drawImage(lit, -pad, -pad, fw + 2 * pad, fh + 2 * pad);
     f.filter = 'none';
-    f.fillStyle = 'rgba(255,255,255,0.22)'; f.fillRect(0, 0, fw, fh);
+    f.fillStyle = 'rgba(255,255,255,0.28)'; f.fillRect(0, 0, fw, fh);
   }
 }
 
@@ -199,8 +200,9 @@ function compose(now) {
   lctx.globalCompositeOperation = 'source-in';
   lctx.drawImage(fx, -ox, -oy, dw, dh);
   ctx.globalAlpha = P.strength;
+  if (P.effect === 3) ctx.globalCompositeOperation = 'screen';
   ctx.drawImage(layer, 0, 0);
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
 }
 
 // share.js wraps this function while recording, so it must stay a reassignable global.
