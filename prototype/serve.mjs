@@ -1,4 +1,4 @@
-// 本地静态服务器：node prototype/serve.mjs → http://localhost:5178/（设置页 settings.html）
+// Local static server: node prototype/serve.mjs → http://localhost:5178/ (settings page settings.html)
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
