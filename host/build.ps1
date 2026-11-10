@@ -1,5 +1,6 @@
 ﻿# Build Dynamic Glow from source with the .NET Framework C# compiler that ships with Windows.
-# -Release also writes dist\DynamicGlow-<version>-win-x64.zip (portable folder) for GitHub releases.
+# -Release also writes dist\DynamicGlow-<version>-win-x64.zip (portable folder) and
+# dist\DynamicGlow-<version>-win-x64.exe (single exe that unpacks the same files to %LOCALAPPDATA%\DynamicGlow\app) for GitHub releases.
 param([switch]$Release)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -85,7 +86,30 @@ if ($Release) {
             [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $files[$k], 'DynamicGlow/' + $k.Replace('\', '/'), 'Optimal')
         }
     } finally { $z.Dispose() }
-    $h = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    "$h  $(Split-Path $zipPath -Leaf)" | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ascii
     Write-Host "Release: $zipPath ($([math]::Round((Get-Item $zipPath).Length / 1KB)) KB)"
+
+    # Single exe: the same files minus the exe, embedded as files.zip (unpacked once per version at first start)
+    $single = Join-Path $bin 'single'
+    New-Item -ItemType Directory -Force $single | Out-Null
+    $filesZip = Join-Path $single 'files.zip'
+    if (Test-Path -LiteralPath $filesZip) { Remove-Item -LiteralPath $filesZip -Force }
+    $z = [IO.Compression.ZipFile]::Open($filesZip, 'Create')
+    try {
+        foreach ($k in $files.Keys) {
+            if ($k -eq 'DynamicGlow.exe' -or $k -eq 'README.md') { continue }
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $files[$k], $k.Replace('\', '/'), 'Optimal')
+        }
+    } finally { $z.Dispose() }
+    $exePath = Join-Path $dist "DynamicGlow-$appVersion-win-x64.exe"
+    & $csc /nologo /target:winexe /platform:x64 /optimize+ /debug- /codepage:65001 /define:SINGLE /win32manifest:"$root\app.manifest" `
+        /win32icon:"$root\DynamicGlow.ico" `
+        /out:"$exePath" "/resource:$filesZip,files.zip" `
+        /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:Accessibility.dll /r:System.IO.Compression.dll `
+        /r:"$lib\Microsoft.Web.WebView2.Core.dll" /r:"$lib\Microsoft.Web.WebView2.WinForms.dll" `
+        "$root\DesktopHost.cs" "$root\Themes.cs" "$versionSource"
+    if ($LASTEXITCODE -ne 0) { throw 'Single-exe build failed' }
+    Write-Host "Release: $exePath ($([math]::Round((Get-Item $exePath).Length / 1KB)) KB)"
+
+    $sums = foreach ($p in @($zipPath, $exePath)) { "$((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant())  $(Split-Path $p -Leaf)" }
+    $sums | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ascii
 }

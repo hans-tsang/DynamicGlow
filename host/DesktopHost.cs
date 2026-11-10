@@ -67,6 +67,15 @@ static class Program
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += delegate(object s, ThreadExceptionEventArgs e) { Log.Write("Unhandled exception: " + e.Exception); };
         AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs e) { FatalError(e.ExceptionObject as Exception); };
+#if SINGLE
+        if (!AppFiles.Unpack())
+        {
+            MessageBox.Show("Dynamic Glow couldn't unpack its files to " + Path.Combine(Log.DataDir, "app") + ".\n\n" +
+                "If an antivirus blocked it, allow DynamicGlow.exe or use the zip download instead. Details are in " + Log.FilePath,
+                "Dynamic Glow", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+#endif
         string missing = AppFiles.Missing();
         if (missing != null)
         {
@@ -123,10 +132,61 @@ static class Program
 }
 
 // Portable layout: DynamicGlow.exe, the WebView2 DLLs and the icon in one folder, pages in its "pages" subfolder.
-// A development build (exe in host\bin) uses the pages in ..\..\prototype. Nothing is unpacked or loaded from elsewhere.
+// A development build (exe in host\bin) uses the pages in ..\..\prototype.
+// The single-exe build (/define:SINGLE) carries that folder as files.zip and unpacks it once per version to %LOCALAPPDATA%\DynamicGlow\app\<hash>.
 static class AppFiles
 {
-    public static readonly string AppDir = AppDomain.CurrentDomain.BaseDirectory;
+    public static string AppDir = AppDomain.CurrentDomain.BaseDirectory;
+#if SINGLE
+    public static bool Unpack()
+    {
+        try
+        {
+            byte[] zip;
+            using (var res = Assembly.GetExecutingAssembly().GetManifestResourceStream("files.zip"))
+            {
+                zip = new byte[res.Length];
+                int n = 0; while (n < zip.Length) n += res.Read(zip, n, zip.Length - n);
+            }
+            string hash;
+            using (var sha = System.Security.Cryptography.SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(zip)).Replace("-", "").Substring(0, 12);
+            string root = Path.Combine(Log.DataDir, "app"), dir = Path.Combine(root, hash);
+            if (!File.Exists(Path.Combine(dir, ".ok")))
+            {
+                string tmp = dir + ".tmp" + Process.GetCurrentProcess().Id;
+                if (Directory.Exists(tmp)) Directory.Delete(tmp, true);
+                using (var a = new System.IO.Compression.ZipArchive(new MemoryStream(zip)))
+                    foreach (var e in a.Entries)
+                    {
+                        if (e.FullName.EndsWith("/")) continue;
+                        string target = Path.GetFullPath(Path.Combine(tmp, e.FullName));
+                        if (!target.StartsWith(tmp + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
+                        Directory.CreateDirectory(Path.GetDirectoryName(target));
+                        using (var src = e.Open()) using (var dst = File.Create(target)) src.CopyTo(dst);
+                    }
+                File.WriteAllText(Path.Combine(tmp, ".ok"), hash);
+                if (Directory.Exists(dir)) Directory.Delete(dir, true);
+                Directory.Move(tmp, dir);
+                Log.Write("Unpacked app files to " + dir);
+                foreach (string old in Directory.GetDirectories(root))        // files from older versions
+                    if (!string.Equals(old, dir, StringComparison.OrdinalIgnoreCase)) try { Directory.Delete(old, true); } catch { }
+            }
+            AppDir = dir + Path.DirectorySeparatorChar;
+            AppDomain.CurrentDomain.AssemblyResolve += delegate(object s, ResolveEventArgs e)
+            {
+                string file = Path.Combine(AppDir, new AssemblyName(e.Name).Name + ".dll");
+                return File.Exists(file) ? Assembly.LoadFrom(file) : null;
+            };
+            SetLoaderFolder();
+            return true;
+        }
+        catch (Exception ex) { Log.Write("Unpacking app files failed: " + ex); return false; }
+    }
+
+    // Separate method: WebView2 types may only be touched after AssemblyResolve is set up.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    static void SetLoaderFolder() { Microsoft.Web.WebView2.Core.CoreWebView2Environment.SetLoaderDllFolderPath(AppDir); }
+#endif
 
     public static string FindPages()
     {

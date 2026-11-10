@@ -13,7 +13,11 @@ Dynamic Glow is a personal fork of [Deskland](https://github.com/BLEZZ0102/Deskl
 
 ## Download
 
-Download **DynamicGlow-<version>-win-x64.zip** from the [latest release](https://github.com/hans-tsang/DynamicGlow/releases/latest), extract the whole zip to a folder (for example `%LOCALAPPDATA%\Programs\DynamicGlow`) and run `DynamicGlow.exe` - no installer needed. Keep the DLLs and the `pages` folder next to the exe. Windows SmartScreen may warn because the exe is unsigned; choose *More info > Run anyway*. `SHA256SUMS.txt` in each release lists the zip hash.
+Download **DynamicGlow-<version>-win-x64.zip** from the [latest release](https://github.com/hans-tsang/DynamicGlow/releases/latest), extract the whole zip to a folder (for example `%LOCALAPPDATA%\Programs\DynamicGlow`) and run `DynamicGlow.exe` - no installer needed. Keep the DLLs and the `pages` folder next to the exe.
+
+Prefer one file? **DynamicGlow-<version>-win-x64.exe** is the same app as a single exe: on first start it unpacks its DLLs and pages to `%LOCALAPPDATA%\DynamicGlow\app`. Some antivirus products are more suspicious of exes that unpack files, so the zip is the safer choice.
+
+Windows SmartScreen may warn because the exe is unsigned; choose *More info > Run anyway*. `SHA256SUMS.txt` in each release lists the file hashes.
 
 The app reads desktop icon positions through the Windows accessibility interface (the one screen readers use) and never reads or writes another program's memory, so behaviour-based antivirus (e.g. Bitdefender Advanced Threat Defense) has nothing to flag. Versions before 0.2.3 used the older cross-process memory method and could be blocked.
 
@@ -30,7 +34,7 @@ powershell -ExecutionPolicy Bypass -File host\build.ps1
 host\bin\DynamicGlow.exe
 ```
 
-`host\build.ps1 -Release` additionally writes `dist\DynamicGlow.exe`, a zip and `SHA256SUMS.txt`. Only the .NET Framework compiler that ships with Windows is needed; the WebView2 SDK is downloaded automatically.
+`host\build.ps1 -Release` additionally writes the portable zip, the single exe and `SHA256SUMS.txt` to `dist`. Only the .NET Framework compiler that ships with Windows is needed; the WebView2 SDK is downloaded automatically.
 
 It picks up your current Windows wallpaper automatically; change the wallpaper in Windows Settings > Personalization > Background and Dynamic Glow follows within a few seconds. To use a different picture instead, click **Use a different image...** in settings; **Use my Windows wallpaper** switches back. Quit from the tray icon (or `host\bin\DynamicGlow.exe --exit`) to restore your normal Windows wallpaper.
 

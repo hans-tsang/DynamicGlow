@@ -23,7 +23,7 @@ jobs:
           Get-ChildItem prototype -Recurse -Filter *.json | ForEach-Object { Get-Content -Raw $_.FullName | ConvertFrom-Json | Out-Null }
           Get-Content -Raw tools/version.json | ConvertFrom-Json | Out-Null
 
-      - name: Build single-file exe
+      - name: Build portable zip and single exe
         shell: pwsh
         run: ./host/build.ps1 -Release
 
