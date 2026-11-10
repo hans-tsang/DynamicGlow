@@ -1562,6 +1562,17 @@ class WallpaperForm : Form
         IntPtr progman = Native.FindWindow("Progman", null);
         if (progman == IntPtr.Zero) { Log.Write("Progman not found"); return false; }
         IntPtr defView = Native.FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
+        // Before 24H2 the icon layer also starts inside Progman, and asking for the wallpaper layer moves it into a top-level WorkerW.
+        // So create the layer first, then decide which structure this is.
+        if (defView != IntPtr.Zero && Native.FindWindowEx(progman, IntPtr.Zero, "WorkerW", null) == IntPtr.Zero)
+        {
+            RequestWorkerW(progman, delegate
+            {
+                return Native.FindWindowEx(progman, IntPtr.Zero, "WorkerW", null) != IntPtr.Zero ||
+                       Native.FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null) == IntPtr.Zero;
+            });
+            defView = Native.FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
+        }
         string mode;
         raised = defView != IntPtr.Zero;
 
@@ -1603,6 +1614,7 @@ class WallpaperForm : Form
                 worker = FindClassicWorker();
             }
             if (worker == IntPtr.Zero) { Log.Write("WorkerW / SHELLDLL_DefView not found"); return false; }
+            if (!Native.IsWindowVisible(worker)) Native.ShowWindow(worker, 5 /* SW_SHOW */);
             parentHwnd = worker; insertAfter = IntPtr.Zero; mode = "Classic: top-level WorkerW child window";
         }
 
