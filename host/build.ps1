@@ -70,7 +70,7 @@ try {
 & $csc /nologo /target:winexe /platform:x64 /optimize+ /debug- /codepage:65001 /win32manifest:"$root\app.manifest" `
     /win32icon:"$root\DynamicGlow.ico" `
     /out:"$bin\DynamicGlow.exe" `
-    /resource:"$payload",payload.zip `
+    "/resource:$payload,payload.zip" `
     /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:System.IO.Compression.dll `
     /r:"$lib\Microsoft.Web.WebView2.Core.dll" /r:"$lib\Microsoft.Web.WebView2.WinForms.dll" `
     "$root\DesktopHost.cs" "$root\Themes.cs" "$versionSource"
