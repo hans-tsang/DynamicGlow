@@ -91,7 +91,7 @@
   .update-action:hover { border-color: #000; background: #000; }
   .update-action:disabled { opacity: .65; cursor: default; }
 
-  /* ---------- Two columns: large live preview on the left, settings on the right ---------- */
+  /* ---------- One column: heading, then the settings panel across the full width ---------- */
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 28px; padding: 0 32px; min-height: 0; }
   .side { display: flex; flex-direction: column; gap: 18px; min-height: 0; padding: 22px; background: var(--panel); border-radius: 24px; }
 
@@ -275,6 +275,15 @@
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition: none !important; }
   }
+  /* Settings fill the window (no preview card); the controls flow into as many columns as fit */
+  .layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 0; }
+  .themes { min-height: auto; }
+  .preview-card[hidden] { display: none; }
+  .side { overflow-y: auto; }
+  .side-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .side-head h2 { font-size: 24px; font-weight: 650; letter-spacing: -.04em; line-height: 1.2; }
+  .side .controls { flex: none; overflow: visible; margin-right: 0; padding-right: 0; columns: 300px 3; column-gap: 40px; }
+  .side .controls .group { break-inside: avoid; border-bottom: 0; padding-top: 0; }
 </style>
 </head>
 <body>
@@ -306,8 +315,7 @@
     </div>
     <div class="warn" id="autostartWarn" hidden role="alert"><p><b data-i18n="autostartBlocked">Start with Windows may have been blocked</b><br><span id="autostartWarnText"></span></p><button id="autostartWarnOk" data-i18n="gotIt">Got it</button></div>
     <div class="theme-list" id="themes" hidden></div>
-    <section class="card preview-card">
-      <div class="preview-head"><h2 id="themeName">&nbsp;</h2><label class="switch-row adaptive-switch" id="adaptiveRow" hidden><span data-i18n="adaptive">Adaptive</span><input type="checkbox" id="adaptive" role="switch" checked><i class="switch" aria-hidden="true"></i></label></div>
+    <section class="card preview-card" hidden>
       <div class="stage" id="stage"><div class="preview" id="previewBox"><iframe id="preview" data-i18n-title="livePreview" title="Live preview" tabindex="-1"></iframe></div></div>
       <p class="preview-foot"><span class="live-dot"></span><span id="previewFoot">Live preview</span></p>
       <div class="preview-actions">
@@ -325,6 +333,7 @@
   </section>
 
   <div class="side">
+    <div class="side-head"><h2 id="themeName">&nbsp;</h2><label class="switch-row adaptive-switch" id="adaptiveRow" hidden><span data-i18n="adaptive">Adaptive</span><input type="checkbox" id="adaptive" role="switch" checked><i class="switch" aria-hidden="true"></i></label></div>
     <section class="card controls" id="controls"></section>
   </div>
 </main>
@@ -740,7 +749,6 @@ function showTheme() {
   renderControls();
   updateFoot();
   layoutPreview();
-  frame.src = themeById(state.theme).page + '?preview=1';
 }
 
 /* ---------- Share: the host has the wallpaper page render an image / record an animation (sample icons, names as color blocks), saves it, copies it to the clipboard and sends a preview back ---------- */

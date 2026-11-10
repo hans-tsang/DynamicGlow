@@ -150,8 +150,19 @@ function buildMask(list) {
   for (const ic of list) h.roundRect((ic.x - grow) * s, (ic.y - grow) * s, (ic.w + 2 * grow) * s, (ic.h + 2 * grow) * s, r * s);
   h.fill();
   const c = m.getContext('2d');
-  c.filter = `blur(${Math.max(1, P.sigma * 0.45 * s).toFixed(2)}px)`;
+  c.filter = `blur(${Math.max(P.effect === 3 ? 22 * s : 1, P.sigma * 0.45 * s).toFixed(2)}px)`;
   c.drawImage(hard, 0, 0);
+  if (P.effect === 3) {                               // glow: an extra wide, fainter halo so it reads as light even at a small spread
+    const g = grow + 60;
+    h.clearRect(0, 0, hard.width, hard.height);
+    h.beginPath();
+    for (const ic of list) h.roundRect((ic.x - g) * s, (ic.y - g) * s, (ic.w + 2 * g) * s, (ic.h + 2 * g) * s, (r + 40) * s);
+    h.fill();
+    c.filter = `blur(${(45 + P.sigma * 0.3) * s}px)`;
+    c.globalCompositeOperation = 'lighter'; c.globalAlpha = 0.6;
+    c.drawImage(hard, 0, 0);
+    c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1;
+  }
   return m;
 }
 function currentMask() { return mask || maskNew; }
