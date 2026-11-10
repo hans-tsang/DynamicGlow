@@ -1,4 +1,4 @@
-﻿# 从源码构建 Deskland：使用 Windows 自带的 .NET Framework C# 编译器。
+﻿# Build Dynamic Island from source with the .NET Framework C# compiler that ships with Windows.
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $lib = Join-Path $root 'lib'
@@ -14,15 +14,15 @@ $missing = @($assemblies | Where-Object { -not (Test-Path -LiteralPath (Join-Pat
 if ($missing.Count -gt 0) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $archive = Join-Path ([IO.Path]::GetTempPath()) ('deskland-webview2-' + [Guid]::NewGuid().ToString('N') + '.zip')
+    $archive = Join-Path ([IO.Path]::GetTempPath()) ('dynamicisland-webview2-' + [Guid]::NewGuid().ToString('N') + '.zip')
     $package = $null
     try {
-        Write-Host "下载 WebView2 SDK $version..."
+        Write-Host "Downloading WebView2 SDK $version..."
         Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$version/microsoft.web.webview2.$version.nupkg" -OutFile $archive -UseBasicParsing
         $package = [IO.Compression.ZipFile]::OpenRead($archive)
         foreach ($assembly in $assemblies) {
             $entry = $package.GetEntry($assembly.Entry)
-            if ($null -eq $entry) { throw "依赖包缺少 $($assembly.Entry)" }
+            if ($null -eq $entry) { throw "Package is missing $($assembly.Entry)" }
             $sourceStream = $entry.Open()
             $targetStream = $null
             try {
@@ -39,26 +39,26 @@ if ($missing.Count -gt 0) {
     }
 }
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-if (-not (Test-Path -LiteralPath $csc)) { throw '找不到 .NET Framework C# 编译器，请在 64 位 Windows 上构建。' }
+if (-not (Test-Path -LiteralPath $csc)) { throw '.NET Framework C# compiler not found; build on 64-bit Windows.' }
 $appVersion = (Get-Content -LiteralPath (Join-Path $root '..\tools\version.json') -Raw | ConvertFrom-Json).version
 if ($appVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid application version' }
-$versionSource = Join-Path $bin 'Deskland-version.cs'
+$versionSource = Join-Path $bin 'DynamicIsland-version.cs'
 $versionText = @"
 using System.Reflection;
-[assembly: AssemblyTitle("Deskland Preview")]
-[assembly: AssemblyProduct("Deskland Preview")]
+[assembly: AssemblyTitle("Dynamic Island")]
+[assembly: AssemblyProduct("Dynamic Island")]
 [assembly: AssemblyVersion("$appVersion.0")]
 [assembly: AssemblyFileVersion("$appVersion.0")]
-[assembly: AssemblyCopyright("Copyright 2026 Deskland authors")]
+[assembly: AssemblyCopyright("Copyright 2026 Deskland authors and Dynamic Island contributors")]
 "@
 [IO.File]::WriteAllText($versionSource, $versionText, (New-Object Text.UTF8Encoding($false)))
 & $csc /nologo /target:winexe /platform:x64 /optimize+ /codepage:65001 /win32manifest:"$root\app.manifest" `
-    /win32icon:"$root\DesklandPreview.ico" `
-    /out:"$bin\Deskland.exe" `
+    /win32icon:"$root\DynamicIsland.ico" `
+    /out:"$bin\DynamicIsland.exe" `
     /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll `
     /r:"$lib\Microsoft.Web.WebView2.Core.dll" /r:"$lib\Microsoft.Web.WebView2.WinForms.dll" `
     "$root\DesktopHost.cs" "$root\Themes.cs" "$versionSource"
-if ($LASTEXITCODE -ne 0) { throw '编译失败' }
+if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 foreach ($assembly in $assemblies) { Copy-Item -LiteralPath (Join-Path $lib $assembly.Name) -Destination $bin -Force }
-Copy-Item -LiteralPath (Join-Path $root 'DesklandPreview.ico') -Destination (Join-Path $bin 'DesklandPreview.ico') -Force
-Write-Host "编译完成：$bin\Deskland.exe"
+Copy-Item -LiteralPath (Join-Path $root 'DynamicIsland.ico') -Destination (Join-Path $bin 'DynamicIsland.ico') -Force
+Write-Host "Built: $bin\DynamicIsland.exe"

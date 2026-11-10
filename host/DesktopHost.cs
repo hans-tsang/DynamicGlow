@@ -1,4 +1,4 @@
-// Deskland · 桌面宿主（原型）
+// Dynamic Island · desktop host (fork of Deskland, GPL-3.0)
 //
 // 做四件事：
 //   1. 把一个无边框窗口挂到桌面图标下面（壁纸层），里面用 WebView2 显示当前主题的页面（如 prototype/flat.html?wallpaper=1）
@@ -27,9 +27,9 @@ using Microsoft.Win32;
 
 static class Program
 {
-    public static readonly string ExitEventName = "DesklandHost_Exit" + InstallProfile.Suffix;
-    public static readonly string MenuEventName = "DesklandHost_Menu" + InstallProfile.Suffix;
-    public static readonly string SettingsEventName = "DesklandHost_Settings" + InstallProfile.Suffix;
+    public static readonly string ExitEventName = "DynamicIslandHost_Exit" + InstallProfile.Suffix;
+    public static readonly string MenuEventName = "DynamicIslandHost_Menu" + InstallProfile.Suffix;
+    public static readonly string SettingsEventName = "DynamicIslandHost_Settings" + InstallProfile.Suffix;
 
     // 通知正在运行的实例（退出 / 弹出菜单）
     static void Signal(string name)
@@ -42,9 +42,9 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
-        // Deskland.exe --exit ：通知正在运行的实例正常退出（恢复原壁纸）
-        // Deskland.exe --menu ：让正在运行的实例在鼠标位置弹出菜单
-        // Deskland.exe --settings ：让正在运行的实例打开设置窗口
+        // DynamicIsland.exe --exit     : ask the running instance to quit (restores the original wallpaper)
+        // DynamicIsland.exe --menu     : show the tray menu at the mouse position
+        // DynamicIsland.exe --settings : open the settings window
         if (args.Length > 0 && args[0] == "--exit") { Signal(ExitEventName); return; }
         if (args.Length > 0 && args[0] == "--menu") { Signal(MenuEventName); return; }
         if (args.Length > 0 && args[0] == "--settings") { Signal(SettingsEventName); return; }
@@ -53,7 +53,7 @@ static class Program
         bool fromAutostart = Array.IndexOf(args, "--autostart") >= 0;
         if (fromAutostart) AutoStartCheck.MarkLaunched();  // 开机自启跑起来了（不管后面是不是已经在运行）
         bool created;
-        var mutex = new Mutex(true, "DesklandHost_Singleton" + InstallProfile.Suffix, out created);
+        var mutex = new Mutex(true, "DynamicIslandHost_Singleton" + InstallProfile.Suffix, out created);
         if (!created)
         {
             if (!fromAutostart) Signal(SettingsEventName); // 已经在运行：再次双击程序 = 打开设置（开机自启那次就悄悄退出）
@@ -102,6 +102,83 @@ static class Log
     }
 }
 
+// The user's own wallpaper image: copied into %LOCALAPPDATA%\DynamicIsland\wallpaper and served as https://wall.local/<name>
+static class WallpaperImage
+{
+    static readonly string[] Exts = { ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".avif", ".jfif" };
+
+    public static string Dir()
+    {
+        string d = Path.Combine(Log.DataDir, "wallpaper");
+        try { Directory.CreateDirectory(d); } catch { }
+        return d;
+    }
+
+    // Serve https://wall.local/<name> from Dir() with a CORS header, so a canvas that draws the image can still be exported (Share image/video).
+    public static void Serve(CoreWebView2 core)
+    {
+        core.AddWebResourceRequestedFilter("https://wall.local/*", CoreWebView2WebResourceContext.All);
+        core.WebResourceRequested += delegate(object sender, CoreWebView2WebResourceRequestedEventArgs e)
+        {
+            Uri u;
+            if (!Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out u) || u.Host != "wall.local") return;
+            string name = Uri.UnescapeDataString(u.AbsolutePath.TrimStart('/'));
+            string path = Path.Combine(Dir(), name);
+            string ext = Path.GetExtension(name).ToLowerInvariant();
+            if (name.Length == 0 || name.IndexOfAny(new[] { '/', '\\', ':' }) >= 0 || name.Contains("..") ||
+                Array.IndexOf(Exts, ext) < 0 || !File.Exists(path))
+            {
+                e.Response = core.Environment.CreateWebResourceResponse(null, 404, "Not Found", "Access-Control-Allow-Origin: *");
+                return;
+            }
+            string mime = ext == ".png" ? "image/png" : ext == ".webp" ? "image/webp" : ext == ".bmp" ? "image/bmp" :
+                ext == ".gif" ? "image/gif" : ext == ".avif" ? "image/avif" : "image/jpeg";
+            try
+            {
+                var ms = new MemoryStream(File.ReadAllBytes(path));
+                e.Response = core.Environment.CreateWebResourceResponse(ms, 200, "OK",
+                    "Content-Type: " + mime + "\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache");
+            }
+            catch (Exception ex) { Log.Write("Serving wallpaper image failed: " + ex.Message); }
+        };
+    }
+
+    public static string Pick(IWin32Window owner)
+    {
+        using (var dlg = new OpenFileDialog())
+        {
+            dlg.Title = "Choose your wallpaper";
+            dlg.Filter = "Images|*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif;*.avif;*.jfif|All files|*.*";
+            dlg.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+            if (dlg.ShowDialog(owner) != DialogResult.OK) return null;
+            return Import(dlg.FileName);
+        }
+    }
+
+    public static string Import(string src)
+    {
+        try
+        {
+            string ext = Path.GetExtension(src).ToLowerInvariant();
+            if (Array.IndexOf(Exts, ext) < 0) { MessageBox.Show("Please choose an image file (JPG, PNG, WebP, BMP, GIF, AVIF).", "Dynamic Island"); return null; }
+            string dir = Dir();
+            string name = "wallpaper-" + DateTime.Now.ToString("yyyyMMddHHmmss") + ext;
+            File.Copy(src, Path.Combine(dir, name), true);
+            foreach (string f in Directory.GetFiles(dir))
+                if (!string.Equals(Path.GetFileName(f), name, StringComparison.OrdinalIgnoreCase))
+                    try { File.Delete(f); } catch { }
+            Log.Write("Wallpaper image: " + src + " -> " + name);
+            return name;
+        }
+        catch (Exception ex)
+        {
+            Log.Write("Wallpaper image import failed: " + ex.Message);
+            MessageBox.Show("Couldn't use that image:\n" + ex.Message, "Dynamic Island");
+            return null;
+        }
+    }
+}
+
 // 2026-10-10 改名（Habitat Wallpaper → Deskland）：老用户的东西照旧能用
 //   - 数据目录 %LOCALAPPDATA%\HabitatWallpaper（设置、开机自启的记录、WebView2 缓存）整个搬到 %LOCALAPPDATA%\Deskland；
 //     旧程序还开着、WebView2 的文件被占着搬不动时，只把设置这些小文件拷过去
@@ -109,7 +186,9 @@ static class Log
 static class Rename
 {
     const string OldName = "HabitatWallpaper";
-    public static void Migrate()
+    public static void Migrate() { }   // Dynamic Island has no legacy data to migrate
+
+    static void MigrateLegacy()
     {
         string oldDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), OldName);
         try
@@ -175,8 +254,8 @@ static class AutoStartCheck
     // 正在运行的安全软件（只用来在提示里点名，方便用户去对的地方改）
     public static string SecuritySoftware()
     {
-        string[,] known = { { "HipsTray", "火绒" }, { "HipsDaemon", "火绒" }, { "360Tray", "360 安全卫士" }, { "360sd", "360 杀毒" },
-                            { "QQPCTray", "腾讯电脑管家" }, { "kxetray", "金山毒霸" }, { "2345SafeTray", "2345 安全卫士" } };
+        string[,] known = { { "HipsTray", "Huorong" }, { "HipsDaemon", "Huorong" }, { "360Tray", "360 Total Security" }, { "360sd", "360 Antivirus" },
+                            { "QQPCTray", "Tencent PC Manager" }, { "kxetray", "Kingsoft Antivirus" }, { "2345SafeTray", "2345 Security" } };
         for (int i = 0; i < known.GetLength(0); i++)
             if (Process.GetProcessesByName(known[i, 0]).Length > 0) return known[i, 1];
         return "";
@@ -210,11 +289,11 @@ static class Json
 }
 
 // 用户设置：当前主题 + 每个主题的参数（只存用户改过的，没改过的用主题默认值）
-// 保存在 %LOCALAPPDATA%\Deskland\settings.json
+// Stored in %LOCALAPPDATA%\DynamicIsland\settings.json
 static class Settings
 {
     static readonly string FilePath = Path.Combine(Log.DataDir, "settings.json");
-    public static string Theme = "beach";
+    public static string Theme = "custom";
     public static string Lang = "auto";                // 界面语言："auto"（跟随系统）或 I18n.Supported 里的一种
     public static Dictionary<string, Dictionary<string, object>> Params = new Dictionary<string, Dictionary<string, object>>();
 
@@ -262,27 +341,17 @@ static class Settings
 static class I18n
 {
     // 增加语言时同步设置页 LANGS 与体验版导出的语言列表。
-    public static readonly string[] Supported = { "zh-CN", "en" };
-    public static string Code = "zh-CN", Sys = "en";     // 现在用的语言；"跟随系统"时会用的语言
+    public static readonly string[] Supported = { "en" };
+    public static string Code = "en", Sys = "en";     // English only
     static Dictionary<string, object> cur, en, zh;
 
-    public static string FromCulture(System.Globalization.CultureInfo c)
-    {
-        string n = c.Name.ToLowerInvariant(), two = c.TwoLetterISOLanguageName;
-        bool zhHant = n.StartsWith("zh") && (n.Contains("hant") || n.EndsWith("-tw") || n.EndsWith("-hk") || n.EndsWith("-mo"));
-        string want = n.StartsWith("zh") ? (zhHant ? "zh-TW" : "zh-CN") : two == "pt" ? "pt-BR" : two;
-        if (Array.IndexOf(Supported, want) >= 0) return want;
-        return n.StartsWith("zh") ? "zh-CN" : "en";       // 繁体中文还没做：先用简体
-    }
+    public static string FromCulture(System.Globalization.CultureInfo c) { return "en"; }
 
     public static void Load(string pageDir, string setting)
     {
-        Sys = FromCulture(System.Globalization.CultureInfo.CurrentUICulture);
-        Code = Array.IndexOf(Supported, setting) >= 0 ? setting : Sys;
-        zh = Read(pageDir, "zh-CN");
-        en = Read(pageDir, "en");
-        cur = Code == "zh-CN" ? zh : Code == "en" ? en : Read(pageDir, Code);
-        Log.Write("界面语言：" + Code + "（设置：" + setting + "，系统：" + Sys + "）");
+        Sys = Code = "en";
+        en = cur = Read(pageDir, "en");
+        zh = null;
     }
 
     static Dictionary<string, object> Read(string pageDir, string code)
@@ -312,7 +381,7 @@ static class I18n
 // 打开设置的方式：双击程序（没运行就先启动再打开）、双击托盘图标、菜单 → 设置…（或 --settings）
 class HostContext : ApplicationContext
 {
-    public const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run", RunName = "DesklandPreview";
+    public const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run", RunName = "DynamicIsland";
     static readonly MethodInfo ShowTrayMenu =
         typeof(NotifyIcon).GetMethod("ShowContextMenu", BindingFlags.Instance | BindingFlags.NonPublic);
 
@@ -375,7 +444,7 @@ class HostContext : ApplicationContext
 
         tray = new NotifyIcon();
         tray.Icon = AppIcon.Create();
-        tray.Text = "Deskland Preview";
+        tray.Text = "Dynamic Island";
         tray.ContextMenu = new ContextMenu(new[] {
             settingsItem,
             pauseItem,
@@ -495,10 +564,31 @@ class HostContext : ApplicationContext
             {
                 string theme = m["theme"] as string;
                 if (theme == null) return;
+                object keepImage = null;
+                Dictionary<string, object> old;
+                if (Settings.Params.TryGetValue(theme, out old)) old.TryGetValue("image", out keepImage);
                 Settings.Params.Remove(theme);
+                if (keepImage != null) Settings.For(theme)["image"] = keepImage;   // resetting sliders never forgets the chosen image
                 if (theme == Settings.Theme && form != null) form.Post("{\"t\":\"reset\"}");
                 SaveSoon();
                 Log.Write("恢复默认设置：" + theme);
+                break;
+            }
+            case "pickImage":
+            {
+                string theme = m.ContainsKey("theme") ? m["theme"] as string : null;
+                if (theme == null || !ThemeAllowed(theme)) return;
+                var win = settingsWin;
+                win.BeginInvoke((MethodInvoker)delegate
+                {
+                    string name = WallpaperImage.Pick(win);
+                    if (name == null) return;
+                    Settings.For(theme)["image"] = name;
+                    if (theme == Settings.Theme && form != null)
+                        form.Post(Json.Stringify(Json.Obj("t", "settings", "v", Json.Obj("image", name))));
+                    SaveSoon();
+                    if (settingsWin != null) settingsWin.Post(Json.Stringify(Json.Obj("t", "imagePicked", "name", name)));
+                });
                 break;
             }
             case "theme":
@@ -544,7 +634,7 @@ class HostContext : ApplicationContext
                 if (lastShare != null && File.Exists(lastShare)) Process.Start(lastShare);
                 break;
             case "openWebsite":
-                Process.Start("https://deskland.app/");
+                Process.Start("https://github.com/BLEZZ0102/Deskland");
                 break;
             case "revealShare":
                 if (lastShare != null && File.Exists(lastShare)) Process.Start("explorer.exe", "/select,\"" + lastShare + "\"");
@@ -568,9 +658,9 @@ class HostContext : ApplicationContext
         {
             int comma = png.IndexOf(',');
             byte[] bytes = Convert.FromBase64String(comma >= 0 ? png.Substring(comma + 1) : png);
-            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Deskland Preview");
+            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Dynamic Island");
             Directory.CreateDirectory(dir);
-            string path = Path.Combine(dir, "Deskland " + DateTime.Now.ToString("yyyy-MM-dd HHmmss") + ".png");
+            string path = Path.Combine(dir, "Dynamic Island " + DateTime.Now.ToString("yyyy-MM-dd HHmmss") + ".png");
             File.WriteAllBytes(path, bytes);
             lastShare = path;
             try
@@ -608,9 +698,9 @@ class HostContext : ApplicationContext
         {
             int comma = video.IndexOf(',');
             byte[] bytes = Convert.FromBase64String(comma >= 0 ? video.Substring(comma + 1) : video);
-            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Deskland Preview");
+            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Dynamic Island");
             Directory.CreateDirectory(dir);
-            string name = "Deskland " + DateTime.Now.ToString("yyyy-MM-dd HHmmss") + (mime == "video/webm" ? ".webm" : ".mp4");
+            string name = "Dynamic Island " + DateTime.Now.ToString("yyyy-MM-dd HHmmss") + (mime == "video/webm" ? ".webm" : ".mp4");
             string path = Path.Combine(dir, name);
             File.WriteAllBytes(path, bytes);
             lastShare = path;
@@ -663,7 +753,7 @@ class HostContext : ApplicationContext
     // 不使用需要额外权限的任务计划；快捷方式创建失败时仍保留 Run 项作为回退。
     static string AutoStartShortcutPath
     {
-        get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Deskland.lnk"); }
+        get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Dynamic Island.lnk"); }
     }
 
     static object OpenAutoStartShortcut()
@@ -710,7 +800,7 @@ class HostContext : ApplicationContext
             link.GetType().InvokeMember("IconLocation", BindingFlags.SetProperty,
                 null, link, new object[] { Application.ExecutablePath + ",0" });
             link.GetType().InvokeMember("Description", BindingFlags.SetProperty,
-                null, link, new object[] { "Deskland" });
+                null, link, new object[] { "Dynamic Island" });
             link.GetType().InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
             return File.Exists(AutoStartShortcutPath);
         }
@@ -769,7 +859,7 @@ class HostContext : ApplicationContext
     void StartForm()
     {
         nextStart = DateTime.MaxValue;
-        if (!ThemeAllowed(Settings.Theme)) Settings.Theme = ThemeAllowed("beach") ? "beach" : "meadow";
+        if (!ThemeAllowed(Settings.Theme)) Settings.Theme = "custom";
         string page = ThemeAllowed(Settings.Theme) ? Themes.PageFor(pageDir, Settings.Theme) : null;
         if (page == null)
         {
@@ -800,7 +890,7 @@ class HostContext : ApplicationContext
         if (restarts.Count > 5)
         {
             Log.Write("壁纸窗口 1 分钟内被销毁超过 5 次，停止重试");
-            MessageBox.Show(I18n.T("errRebuilt") + "\n\n" + I18n.T("errSeeLog", "path", Log.FilePath), "Deskland Preview");
+            MessageBox.Show(I18n.T("errRebuilt") + "\n\n" + I18n.T("errSeeLog", "path", Log.FilePath), "Dynamic Island");
             Exit();
             return;
         }
@@ -871,7 +961,7 @@ static class AppIcon
 {
     public static Icon Create()
     {
-        return new Icon(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DesklandPreview.ico"));
+        return new Icon(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DynamicIsland.ico"));
     }
 
     static GraphicsPath RoundRect(Rectangle r, int radius)
@@ -898,8 +988,8 @@ class SettingsForm : Form
     {
         this.pageDir = pageDir;
         this.host = host;
-        Text = "Deskland Preview";
-        AccessibleName = "Deskland Preview";
+        Text = "Dynamic Island";
+        AccessibleName = "Dynamic Island";
         ShowIcon = true;
         Icon = AppIcon.Create();
         StartPosition = FormStartPosition.CenterScreen;
@@ -948,6 +1038,7 @@ class SettingsForm : Form
             if (IsDisposed) return;
             var core = web.CoreWebView2;
             core.SetVirtualHostNameToFolderMapping("app.local", pageDir, CoreWebView2HostResourceAccessKind.Allow);
+            WallpaperImage.Serve(core);
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.IsStatusBarEnabled = false;
             core.Settings.IsZoomControlEnabled = false;
@@ -963,7 +1054,7 @@ class SettingsForm : Form
         catch (Exception ex)
         {
             Log.Write("设置窗口启动失败：" + ex);
-            MessageBox.Show(I18n.T("errSettings", "msg", ex.Message), "Deskland Preview");
+            MessageBox.Show(I18n.T("errSettings", "msg", ex.Message), "Dynamic Island");
             Close();
         }
     }
@@ -1014,7 +1105,7 @@ class WallpaperForm : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         BackColor = Color.FromArgb(26, 163, 196);
-        Text = "DesklandWindow";
+        Text = "DynamicIslandWindow";
 
         web = new WebView2();
         web.Dock = DockStyle.Fill;
@@ -1149,6 +1240,7 @@ class WallpaperForm : Form
             if (shuttingDown || IsDisposed) return;
             var core = web.CoreWebView2;
             core.SetVirtualHostNameToFolderMapping("app.local", pageDir, CoreWebView2HostResourceAccessKind.Allow);
+            WallpaperImage.Serve(core);
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.AreDevToolsEnabled = true;
             core.Settings.IsStatusBarEnabled = false;
@@ -1180,7 +1272,7 @@ class WallpaperForm : Form
     void Fail(string msg)
     {
         Log.Write(msg);
-        MessageBox.Show(msg + "\n\n" + I18n.T("errSeeLog", "path", Log.FilePath), "Deskland Preview");
+        MessageBox.Show(msg + "\n\n" + I18n.T("errSeeLog", "path", Log.FilePath), "Dynamic Island");
         Fatal = true;
         Shutdown();
     }
@@ -1526,25 +1618,25 @@ static class Native
     [DllImport("kernel32.dll")] public static extern bool ReadProcessMemory(IntPtr proc, IntPtr addr, out RECT buf, int size, out IntPtr read);
 }
 
-// Deskland Preview has its own data and instance identity; isolated profiles support installation QA.
+// Dynamic Island has its own data and instance identity; isolated profiles support installation QA.
 static class InstallProfile
 {
-    public static readonly string Override = Environment.GetEnvironmentVariable("DESKLAND_PROFILE_DIR");
+    public static readonly string Override = Environment.GetEnvironmentVariable("DYNAMICISLAND_PROFILE_DIR");
     public static readonly bool Isolated = !string.IsNullOrEmpty(Override);
     public static readonly string DataDir = Isolated ? Path.GetFullPath(Override) : Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesklandPreview");
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DynamicIsland");
     public static readonly string Suffix = MakeSuffix();
     static string MakeSuffix()
     {
-        if (!Isolated) return "_Preview";
+        if (!Isolated) return "_DI";
         using (var hash = System.Security.Cryptography.SHA256.Create())
-            return "_Preview_" + BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(DataDir.ToUpperInvariant()))).Replace("-", "").Substring(0, 24);
+            return "_DI_" + BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(DataDir.ToUpperInvariant()))).Replace("-", "").Substring(0, 24);
     }
 
     // An installer may only close the instance using this exact executable path.
     public static int StopInstalled()
     {
-        foreach (Process process in Process.GetProcessesByName("Deskland"))
+        foreach (Process process in Process.GetProcessesByName("DynamicIsland"))
         {
             using (process)
             {

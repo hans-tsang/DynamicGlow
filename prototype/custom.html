@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dynamic Island · My Wallpaper</title>
+<!--
+  Dynamic Island · "My Wallpaper" theme (2D canvas)
+  - Shows the user's own image (chosen in Settings; the host copies it to %LOCALAPPDATA%\DynamicIsland\wallpaper
+    and serves it as https://wall.local/<name>).
+  - Adaptive: a soft mask follows the real desktop icons; inside it the image is frosted / shadowed / glowing.
+    When icons move, the old and new masks cross-fade.
+  - Static image + effect are cached; nothing is redrawn while idle unless "Motion" (slow pan & zoom) is on.
+  Globals used by share.js: cv, draw(), icons, W, H, WALL, TASKBAR, paused, frameN, cacheOK, commit().
+-->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #101418; }
+  #art { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #ghosts { position: fixed; inset: 0; pointer-events: none; display: none; }
+  body.preview #ghosts { display: block; }
+  .ghost { position: absolute; }
+  .ghost i { position: absolute; left: 50%; top: 4px; width: 48px; height: 48px; margin-left: -24px; border-radius: 9px;
+    background: rgba(255,255,255,.88); box-shadow: 3px 6px 8px rgba(0,0,0,.28); }
+  .ghost b { position: absolute; left: 14%; right: 14%; top: 60px; height: 10px; border-radius: 5px; background: rgba(255,255,255,.75); }
+</style>
+</head>
+<body>
+<canvas id="art"></canvas>
+<div id="ghosts"></div>
+<script>
+'use strict';
+
+const QS = new URLSearchParams(location.search);
+const WALL = QS.has('wallpaper');
+const PREVIEW = QS.has('preview');
+const TASKBAR = 48, CELL_W = 76, CELL_H = 100, GRID_X0 = 4, GRID_Y0 = 6;   // sample desktop grid (share.js demos)
+const MORPH_MS = 700, FADE_IN_MS = 1000;
+
+// Defaults must match themes.json ("custom").
+const P = { image: '', fit: 0, effect: 1, strength: 0.85, sigma: 60, dim: 0, motion: 0, adaptive: 1, cap30: true };
+const DEFAULTS = Object.assign({}, P);
+const KEYS = ['image', 'fit', 'effect', 'strength', 'sigma', 'dim', 'motion', 'adaptive'];
+const OPTION_MAX = { fit: 3, effect: 3, motion: 2, adaptive: 1 };
+
+const cv = document.getElementById('art');
+const ctx = cv.getContext('2d');
+let W = innerWidth, H = innerHeight;
+let icons = [];
+let paused = false, frameN = 0, cacheOK = false, dirty = true;
+let imageUrl = '';                   // browser-only override (blob: URL from the settings page)
+let img = null, imgReady = false;
+let base = null, fx = null, zoom = 1;
+let maskOld = null, maskNew = null, mask = null, morphT0 = 0, morphMs = MORPH_MS, morphing = false;
+const layer = document.createElement('canvas'), lctx = layer.getContext('2d');
+
+const canvas = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; };
+const MASK_DIV = 4;                  // the mask is soft, so a quarter-resolution canvas is enough
+
+/* ---------- image ---------- */
+function imageSrc() {
+  if (imageUrl) return imageUrl;
+  return P.image ? 'https://wall.local/' + encodeURIComponent(P.image) : '';
+}
+function loadImage() {
+  const src = imageSrc();
+  imgReady = false; img = null; cacheOK = false; dirty = true;
+  if (!src) return;
+  const im = new Image();
+  im.decoding = 'async';
+  if (src.startsWith('https://wall.local/')) im.crossOrigin = 'anonymous';
+  im.onload = () => { if (img !== im) return; imgReady = true; cacheOK = false; dirty = true; };
+  im.onerror = () => { if (img === im) img = null; };
+  img = im;
+  im.src = src;
+}
+
+// Draw the image into (w, h) according to the fit mode. 0 Fill (cover), 1 Fit (contain), 2 Stretch, 3 Center.
+function placeImage(c, w, h, fit, s) {
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  let dw = w, dh = h;
+  if (fit === 0) { const k = Math.max(w / iw, h / ih); dw = iw * k; dh = ih * k; }
+  else if (fit === 1) { const k = Math.min(w / iw, h / ih); dw = iw * k; dh = ih * k; }
+  else if (fit === 3) { dw = iw * s; dh = ih * s; }     // 1 image pixel per CSS pixel
+  c.imageSmoothingQuality = 'high';
+  c.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+}
+function placeholder(c, w, h) {
+  const g = c.createLinearGradient(0, 0, w, h);
+  g.addColorStop(0, '#1d2b53'); g.addColorStop(0.55, '#3a2f6b'); g.addColorStop(1, '#7a3f6f');
+  c.fillStyle = g; c.fillRect(0, 0, w, h);
+}
+
+/* ---------- static caches: base image (+ letterbox backdrop, dim) and the effect version ---------- */
+function buildCaches() {
+  const s = cv._scale || 1, cw = cv.width, ch = cv.height;
+  zoom = P.motion ? 1.08 : 1;
+  const bw = cw * zoom, bh = ch * zoom;
+  base = canvas(bw, bh);
+  const b = base.getContext('2d');
+  if (imgReady) {
+    if (P.fit === 1 || P.fit === 3) {                 // letterbox: blurred, darkened cover copy behind the image
+      b.save();
+      b.filter = `blur(${Math.round(40 * s * zoom)}px) brightness(0.55)`;
+      const pad = 80 * s;
+      b.translate(-pad, -pad);
+      placeImage(b, bw + 2 * pad, bh + 2 * pad, 0, s * zoom);
+      b.restore();
+    }
+    placeImage(b, bw, bh, P.fit, s * zoom);
+  } else placeholder(b, bw, bh);
+  if (P.dim > 0) { b.fillStyle = `rgba(0,0,0,${P.dim})`; b.fillRect(0, 0, bw, bh); }
+
+  fx = null;
+  if (P.effect === 0) return;
+  const half = P.effect !== 2;                       // blurred effects can live at half resolution
+  const k = half ? 0.5 : 1, fw = bw * k, fh = bh * k;
+  fx = canvas(fw, fh);
+  const f = fx.getContext('2d');
+  const pad = 40 * s * k;
+  if (P.effect === 1) {                              // frosted glass
+    f.filter = `blur(${Math.round(16 * s * k)}px) saturate(1.25)`;
+    f.drawImage(base, -pad, -pad, fw + 2 * pad, fh + 2 * pad);
+    f.filter = 'none';
+    f.fillStyle = 'rgba(255,255,255,0.16)'; f.fillRect(0, 0, fw, fh);
+  } else if (P.effect === 2) {                       // shadow: darker, slightly desaturated so labels pop
+    f.filter = 'brightness(0.42) saturate(0.85)';
+    f.drawImage(base, 0, 0, fw, fh);
+  } else {                                           // glow
+    f.filter = `blur(${Math.round(10 * s * k)}px) brightness(1.35) saturate(1.1)`;
+    f.drawImage(base, -pad, -pad, fw + 2 * pad, fh + 2 * pad);
+    f.filter = 'none';
+    f.fillStyle = 'rgba(255,255,255,0.22)'; f.fillRect(0, 0, fw, fh);
+  }
+}
+
+/* ---------- icon mask ---------- */
+function buildMask(list) {
+  const s = (cv._scale || 1) / MASK_DIV;
+  const m = canvas(cv.width / MASK_DIV, cv.height / MASK_DIV);
+  if (!list.length) return m;
+  const hard = canvas(m.width, m.height), h = hard.getContext('2d');
+  const grow = P.sigma * 0.35, r = 14 + P.sigma * 0.2;
+  h.fillStyle = '#fff';
+  h.beginPath();
+  for (const ic of list) h.roundRect((ic.x - grow) * s, (ic.y - grow) * s, (ic.w + 2 * grow) * s, (ic.h + 2 * grow) * s, r * s);
+  h.fill();
+  const c = m.getContext('2d');
+  c.filter = `blur(${Math.max(1, P.sigma * 0.45 * s).toFixed(2)}px)`;
+  c.drawImage(hard, 0, 0);
+  return m;
+}
+function currentMask() { return mask || maskNew; }
+// New icon layout: cross-fade from whatever is showing now to the new mask.
+function commit(instant) {
+  const next = buildMask(P.adaptive ? icons : []);
+  if (instant) { maskOld = null; maskNew = next; mask = null; morphing = false; dirty = true; return; }
+  maskOld = currentMask() ? copyOf(currentMask()) : null;
+  maskNew = next;
+  morphMs = maskOld ? MORPH_MS : FADE_IN_MS;
+  morphT0 = performance.now(); morphing = true; dirty = true;
+}
+function copyOf(c) { const d = canvas(c.width, c.height); d.getContext('2d').drawImage(c, 0, 0); return d; }
+function blendMasks(k) {
+  if (!mask || mask.width !== maskNew.width || mask.height !== maskNew.height) mask = canvas(maskNew.width, maskNew.height);
+  const c = mask.getContext('2d');
+  c.globalCompositeOperation = 'copy'; c.globalAlpha = 1; c.clearRect(0, 0, mask.width, mask.height);
+  c.globalCompositeOperation = 'lighter';
+  if (maskOld) { c.globalAlpha = 1 - k; c.drawImage(maskOld, 0, 0, mask.width, mask.height); }
+  c.globalAlpha = k; c.drawImage(maskNew, 0, 0);
+  c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
+}
+const smooth = t => t * t * (3 - 2 * t);
+
+/* ---------- frame ---------- */
+function compose(now) {
+  const cw = cv.width, ch = cv.height;
+  let z = 1, ox = 0, oy = 0;
+  if (P.motion) {                                    // Ken Burns: slow drift and breathing zoom inside the 8% margin
+    const t = now / 1000 * (P.motion === 1 ? 0.035 : 0.09);
+    z = 1 + (zoom - 1) * (0.55 + 0.45 * Math.sin(t * 0.73));
+    ox = (cw * z - cw) * (0.5 + 0.5 * Math.sin(t));
+    oy = (ch * z - ch) * (0.5 + 0.5 * Math.cos(t * 0.81));
+  }
+  const dw = cw * z, dh = ch * z;
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'copy';
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(base, -ox, -oy, dw, dh);
+  ctx.globalCompositeOperation = 'source-over';
+  const m = morphing ? mask : maskNew;
+  if (!fx || !m || P.strength <= 0) return;
+  if (layer.width !== cw || layer.height !== ch) { layer.width = cw; layer.height = ch; }
+  lctx.globalCompositeOperation = 'copy';
+  lctx.imageSmoothingEnabled = true;
+  lctx.drawImage(m, 0, 0, cw, ch);
+  lctx.globalCompositeOperation = 'source-in';
+  lctx.drawImage(fx, -ox, -oy, dw, dh);
+  ctx.globalAlpha = P.strength;
+  ctx.drawImage(layer, 0, 0);
+  ctx.globalAlpha = 1;
+}
+
+// share.js wraps this function while recording, so it must stay a reassignable global.
+function draw(now) {
+  frameN++;
+  if (!cacheOK) { buildCaches(); maskNew = buildMask(P.adaptive ? icons : []); maskOld = null; morphing = false; cacheOK = true; dirty = true; }
+  if (morphing) {
+    const k = Math.min(1, (now - morphT0) / morphMs);
+    blendMasks(smooth(Math.max(0, k)));
+    if (k >= 1) { morphing = false; maskOld = null; mask = null; }
+    dirty = true;
+  }
+  if (P.motion) dirty = true;
+  if (!dirty) return;
+  dirty = false;
+  compose(now);
+}
+
+function resize() {
+  const s = window.devicePixelRatio || 1, box = cv.getBoundingClientRect();
+  W = box.width || innerWidth; H = box.height || innerHeight;
+  cv.width = Math.round(W * s); cv.height = Math.round(H * s); cv._scale = s;
+  cacheOK = false; dirty = true;
+}
+addEventListener('resize', resize);
+resize();
+
+let lastFrame = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (paused) return;
+  if (P.motion && P.cap30 && now - lastFrame < 31) return;
+  lastFrame = now;
+  draw(now);
+}
+requestAnimationFrame(frame);
+
+/* ---------- hosted mode: wallpaper (?wallpaper=1, WebView2 host) or preview (?preview=1, settings iframe) ---------- */
+function applySettings(v) {
+  let reload = false, rebuild = false, remask = false, adaptiveChanged = false;
+  if (typeof v.imageUrl === 'string' && v.imageUrl !== imageUrl) { imageUrl = v.imageUrl; reload = true; }
+  for (const k of KEYS) {
+    if (!(k in v) || typeof v[k] !== typeof DEFAULTS[k] || P[k] === v[k]) continue;
+    if (k in OPTION_MAX && !(Number.isInteger(v[k]) && v[k] >= 0 && v[k] <= OPTION_MAX[k])) continue;
+    if (k === 'image' && /[\\/]/.test(v[k])) continue;
+    P[k] = v[k];
+    if (k === 'image') reload = true;
+    else if (k === 'adaptive') adaptiveChanged = true;
+    else if (k === 'sigma') remask = true;
+    else if (k !== 'strength') rebuild = true;
+  }
+  if (reload) loadImage();
+  if (rebuild) cacheOK = false;
+  if (adaptiveChanged) commit();
+  else if (remask && cacheOK) commit(true);
+  dirty = true;
+}
+
+function drawGhosts() {
+  document.getElementById('ghosts').innerHTML = icons.map(ic =>
+    `<div class="ghost" style="left:${ic.x}px;top:${ic.y}px;width:${ic.w}px;height:${ic.h}px"><i></i><b></b></div>`).join('');
+}
+
+function startHostedMode() {
+  if (PREVIEW) document.body.classList.add('preview');
+  const handle = m => {
+    if (m.t === 'pause') { paused = PREVIEW ? false : !!m.v; dirty = true; return; }
+    if (m.t === 'settings') { applySettings(m.v || {}); return; }
+    if (m.t === 'reset') { applySettings(Object.assign({}, DEFAULTS, { image: P.image }, m.v || {})); return; }
+    if (m.t !== 'icons') return;
+    const k = window.devicePixelRatio || 1;           // physical pixels → CSS pixels
+    icons = m.vis ? m.r.map(([l, t, r, b]) => ({ x: l / k, y: t / k, w: (r - l) / k, h: (b - t) / k })) : [];
+    if (PREVIEW) drawGhosts();
+    if (cacheOK) commit(); else dirty = true;
+  };
+  if (PREVIEW) {
+    addEventListener('message', ev => { if (ev.source === parent) handle(typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data); });
+    parent.postMessage(JSON.stringify({ t: 'ready' }), '*');
+    return;
+  }
+  const host = window.chrome && window.chrome.webview;
+  if (!host) return;
+  host.addEventListener('message', ev => { try { handle(JSON.parse(ev.data)); } catch (e) { } });
+  host.postMessage('ready');
+}
+
+if (WALL || PREVIEW) startHostedMode();
+else {
+  // Opened directly in a browser: sample icons so the effect is visible.
+  for (let c = 0; c < 2; c++) for (let r = 0; r < 6; r++) icons.push({ x: GRID_X0 + c * CELL_W, y: GRID_Y0 + r * CELL_H, w: 76, h: 92 });
+  if (QS.get('img')) { imageUrl = QS.get('img'); loadImage(); }
+}
+</script>
+<script src="share.js"></script>
+</body>
+</html>

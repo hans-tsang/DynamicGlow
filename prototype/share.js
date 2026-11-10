@@ -1,4 +1,4 @@
-// Deskland · 一键分享（所有主题页面共用，放在主题脚本后面加载）
+// Dynamic Island · one-click share (shared by theme pages; load after the theme script)
 // 把当前画面按屏幕的实际像素重新画一张，再在每个图标的位置画一个示例图标（文件夹、文档、图片、应用），
 // 名字画成白色的圆角色块。不截屏：图标的样子和文件名一概不读，只用位置（是哪种图标、名字多长都是按位置随机编的），
 // 所以图里不会露出任何文件名；设置窗口、别的窗口挡着桌面也没关系。
@@ -253,8 +253,8 @@
   // 先等画面稳定：壁纸暂停着（比如设置窗口最大化了）就先放开跑一会儿，开场的树、房子没长好就等它长好（最多 6 秒）
   function record(onProgress) {
     const mime = pickMime();
-    if (!mime) return Promise.reject(new Error('这台电脑不支持录视频'));
-    if (busy) return Promise.reject(new Error('上一段还在录'));
+    if (!mime) return Promise.reject(new Error('This computer can\'t record video'));
+    if (busy) return Promise.reject(new Error('The previous clip is still recording'));
     busy = true;
     const wasPaused = typeof paused !== 'undefined' && paused;
     if (wasPaused) paused = false;
@@ -415,7 +415,7 @@
         if (onProgress && prog - lastProg >= 0.05) { lastProg = prog; onProgress(prog); }
         if (t >= total) { poster = thumbOf(comp, 520); finish(null); }
       };
-      setTimeout(() => finish(new Error('画面没有动起来（壁纸可能被完全挡住了）')), (total + 8) * 1000);
+      setTimeout(() => finish(new Error('The wallpaper didn\'t render (it may be fully covered)')), (total + 8) * 1000);
     });
   }
   window.desklandRecord = record;
@@ -444,13 +444,13 @@
       record(p => host.postMessage('recprogress|' + p.toFixed(2))).then(r => {
         const fr = new FileReader();
         fr.onload = () => host.postMessage('record|' + r.mime + '|' + r.poster + '|' + fr.result);
-        fr.onerror = () => host.postMessage('record|error|读不出录好的视频');
+        fr.onerror = () => host.postMessage('record|error|Could not read the recorded video');
         fr.readAsDataURL(r.blob);
       }, e => host.postMessage('record|error|' + (e && e.message || e)));
       return;
     }
     if (m.t !== 'snapshot') return;
-    if (busy) { host.postMessage('snapshot|error|正在录动画，等录完再试'); return; }
+    if (busy) { host.postMessage('snapshot|error|A video is recording; try again when it finishes'); return; }
     if (typeof paused === 'undefined' || !paused) { send(); return; }
     paused = false;
     const t0 = performance.now(), f0 = frameN;

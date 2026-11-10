@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Deskland Preview</title>
+<title>Dynamic Island</title>
 <!--
-  Deskland 设置窗口
-  - 由桌面宿主（host/Deskland.exe）在 WebView2 里打开；单独用浏览器打开时使用模拟数据，方便调界面
+  Dynamic Island settings window
+  - Opened by the desktop host (host/bin/DynamicIsland.exe) in WebView2; opened in a plain browser it uses mock data.
   - 主题与参数来自 themes.json，控件按清单自动生成
   - 实时预览：iframe 加载主题页面的 ?preview=1 模式，用你桌面上真实的图标位置
   - 和宿主的消息（JSON 字符串）：
@@ -49,6 +49,7 @@
   .top-left { display: flex; align-items: center; gap: 28px; }
   .top-right { display: flex; align-items: center; gap: 18px; }
   .lang-row { display: flex; flex: none; align-items: center; gap: 6px; color: var(--muted); }
+  .lang-row[hidden] { display: none; }
   .lang-row svg { width: 15px; height: 15px; flex: none; }
   .lang-row select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
     width: 170px; flex: none; padding: 7px 9px; cursor: pointer; }
@@ -195,6 +196,8 @@
   .soon { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 0 4px; color: var(--faint); font-size: 11.5px; }
   .chip { padding: 2px 9px; border-radius: 10px; border: 1px dashed var(--line); background: var(--panel-2); color: var(--muted); }
   .empty { padding: 40px 10px; text-align: center; color: var(--muted); }
+  .image-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+  .image-thumb { width: 96px; height: 54px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
 
   /* ---------- 一键分享 ---------- */
   .preview-actions { display: grid; grid-template-columns: minmax(0, .8fr) repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 16px; }
@@ -274,16 +277,16 @@
 <body>
 <header class="top">
   <div class="top-left">
-    <div class="brand">Deskland Preview</div>
-    <div class="section-title" data-i18n="themes">主题</div>
+    <div class="brand">Dynamic Island</div>
+    <div class="section-title" data-i18n="themes">Themes</div>
   </div>
   <div class="top-right">
-    <label class="lang-row">
+    <label class="lang-row" hidden>
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M1.8 8h12.4M8 1.8c1.8 1.7 2.7 3.8 2.7 6.2S9.8 12.5 8 14.2C6.2 12.5 5.3 10.4 5.3 8S6.2 3.5 8 1.8z"/></svg>
-      <select id="lang" data-i18n-title="language" aria-label="Language"></select>
+      <select id="lang" data-i18n-title="language" aria-label="Language" hidden></select>
     </label>
-    <label class="switch-row" data-i18n-title="autostartTitle" title="开机后自动运行 Deskland">
-      <span data-i18n="autostart">开机自动启动</span><input type="checkbox" id="autostart"><i class="switch"></i>
+    <label class="switch-row" data-i18n-title="autostartTitle" title="Run Dynamic Island automatically when you sign in">
+      <span data-i18n="autostart">Start with Windows</span><input type="checkbox" id="autostart"><i class="switch"></i>
     </label>
   </div>
 </header>
@@ -291,33 +294,33 @@
 <main class="layout">
   <section class="themes">
     <div class="collection-head">
-      <h1 data-i18n="collectionTitle">选一片风景。</h1>
-      <p data-i18n="collectionSubtitle">让图标成为风景的一部分。</p>
+      <h1 data-i18n="collectionTitle">Make it yours.</h1>
+      <p data-i18n="collectionSubtitle">Your own wallpaper, with your icons blended in.</p>
     </div>
     <div class="update-notice" id="updateNotice" hidden role="status" aria-live="polite">
       <span class="update-symbol" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13V3m0 0L6.5 6.5M10 3l3.5 3.5"/><path d="M4 12v3.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V12"/></svg></span>
-      <div class="update-copy"><b data-i18n="updateAvailable">有更新可用</b><p id="updateVersion"></p></div>
-      <button class="ghost-btn update-action" id="updateProgram" data-i18n="updateProgram">立即更新</button>
+      <div class="update-copy"><b data-i18n="updateAvailable">Update available</b><p id="updateVersion"></p></div>
+      <button class="ghost-btn update-action" id="updateProgram" data-i18n="updateProgram">Update now</button>
     </div>
-    <div class="warn" id="autostartWarn" hidden role="alert"><p><b data-i18n="autostartBlocked">开机自动启动可能被拦截了</b><br><span id="autostartWarnText"></span></p><button id="autostartWarnOk" data-i18n="gotIt">知道了</button></div>
+    <div class="warn" id="autostartWarn" hidden role="alert"><p><b data-i18n="autostartBlocked">Start with Windows may have been blocked</b><br><span id="autostartWarnText"></span></p><button id="autostartWarnOk" data-i18n="gotIt">Got it</button></div>
     <div class="theme-list" id="themes"></div>
   </section>
 
   <div class="side">
     <section class="card preview-card">
-      <div class="preview-head"><h2 id="themeName">　</h2><label class="switch-row adaptive-switch" id="adaptiveRow" hidden><span data-i18n="adaptive">自适应</span><input type="checkbox" id="adaptive" role="switch" checked><i class="switch" aria-hidden="true"></i></label></div>
-      <div class="stage" id="stage"><div class="preview" id="previewBox"><iframe id="preview" data-i18n-title="livePreview" title="实时预览" tabindex="-1"></iframe></div></div>
-      <p class="preview-foot"><span class="live-dot"></span><span id="previewFoot">实时预览</span></p>
+      <div class="preview-head"><h2 id="themeName">　</h2><label class="switch-row adaptive-switch" id="adaptiveRow" hidden><span data-i18n="adaptive">Adaptive</span><input type="checkbox" id="adaptive" role="switch" checked><i class="switch" aria-hidden="true"></i></label></div>
+      <div class="stage" id="stage"><div class="preview" id="previewBox"><iframe id="preview" data-i18n-title="livePreview" title="Live preview" tabindex="-1"></iframe></div></div>
+      <p class="preview-foot"><span class="live-dot"></span><span id="previewFoot">Live preview</span></p>
       <div class="preview-actions">
-        <button class="ghost-btn share" id="reseed" data-i18n-title="refreshTitle" title="重新生成这个主题的画面">
+        <button class="ghost-btn share" id="reseed" data-i18n-title="refreshTitle" title="Generate a new scene for this theme">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 8a5.2 5.2 0 1 1-1.6-3.75"/><path d="M13.4 2.6v3.2h-3.2"/></svg>
-          <span data-i18n="refresh">刷新</span></button>
-        <button class="ghost-btn share" id="share" data-i18n-title="shareImageTitle" title="用保护隐私的方式分享你的桌面图片">
+          <span data-i18n="refresh">Refresh</span></button>
+        <button class="ghost-btn share" id="share" data-i18n-title="shareImageTitle" title="Share your desktop image while protecting your privacy">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.2"/><path d="m2.5 11.5 3.5-3 2.5 2 2-1.5 3 2.5"/></svg>
-          <span id="shareText">分享图片</span></button>
-        <button class="ghost-btn share" id="shareVideo" data-i18n-title="shareVideoTitle" title="用保护隐私的方式分享你的桌面动画">
+          <span id="shareText">Share image</span></button>
+        <button class="ghost-btn share" id="shareVideo" data-i18n-title="shareVideoTitle" title="Share your desktop animation while protecting your privacy">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="3.5" width="9" height="9" rx="1.5"/><path d="m10.8 6.6 3.4-2v6.8l-3.4-2"/></svg>
-          <span id="shareVideoText">分享动画</span></button>
+          <span id="shareVideoText">Share video</span></button>
       </div>
     </section>
     <section class="card controls" id="controls"></section>
@@ -327,80 +330,79 @@
 <div class="modal" id="purchaseModal" hidden role="dialog" aria-modal="true" aria-labelledby="purchaseTitle">
   <div class="box purchase-box">
     <div class="purchase-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
-    <h3 id="purchaseTitle" data-i18n="purchaseTitle">购买壁纸版</h3>
+    <h3 id="purchaseTitle" data-i18n="purchaseTitle">Get the Wallpaper edition</h3>
     <p class="sub" id="purchaseTheme"></p>
-    <p class="sub" data-i18n="purchaseMessage">体验版可永久使用沙滩和草地。壁纸版可解锁更多主题，并在同一个 Deskland 中使用。</p>
+    <p class="sub" data-i18n="purchaseMessage">The preview includes Beach and Meadow forever. Get the Wallpaper edition to unlock more themes in the same Dynamic Island app.</p>
     <div class="actions">
-      <button class="ghost-btn" id="purchaseLater" data-i18n="purchaseLater">继续体验</button>
-      <button class="ghost-btn primary" id="purchaseWebsite" data-i18n="purchaseWebsite">前往官网</button>
+      <button class="ghost-btn" id="purchaseLater" data-i18n="purchaseLater">Keep exploring</button>
+      <button class="ghost-btn primary" id="purchaseWebsite" data-i18n="purchaseWebsite">Visit website</button>
     </div>
   </div>
 </div>
 
 <div class="modal" id="shareModal" hidden role="dialog" aria-modal="true" aria-labelledby="shareTitle">
   <div class="box">
-    <h3 id="shareTitle">桌面图已经准备好了</h3>
-    <p class="sub" id="shareSub">图标换成了示例图标，文件名换成了色块，不会露出你的文件。图片已复制到剪贴板，可以直接粘贴到聊天、微博、小红书……</p>
-    <img id="shareImg" data-i18n-alt="sharePreviewAlt" alt="分享图预览">
+    <h3 id="shareTitle">Your desktop picture is ready</h3>
+    <p class="sub" id="shareSub"></p>
+    <img id="shareImg" data-i18n-alt="sharePreviewAlt" alt="Preview of the shared image">
     <video id="shareVid" hidden autoplay loop muted playsinline controls></video>
     <p class="path" id="sharePath"></p>
     <div class="actions">
-      <button class="ghost-btn" id="shareReveal" data-i18n="openFolder">打开所在文件夹</button>
-      <button class="ghost-btn" id="shareOpen">打开图片</button>
-      <a class="ghost-btn" id="shareDownload" hidden download="Deskland.png">保存图片</a>
-      <button class="ghost-btn primary" id="shareClose" data-i18n="ok">好的</button>
+      <button class="ghost-btn" id="shareReveal" data-i18n="openFolder">Show in folder</button>
+      <button class="ghost-btn" id="shareOpen">Open image</button>
+      <a class="ghost-btn" id="shareDownload" hidden download="Dynamic Island.png">Save image</a>
+      <button class="ghost-btn primary" id="shareClose" data-i18n="ok">OK</button>
     </div>
   </div>
 </div>
 
 <div class="modal" id="helpModal" hidden role="dialog" aria-modal="true" aria-labelledby="helpTitle">
   <div class="box help-box">
-    <button class="auth-close" id="helpCloseX" data-i18n-title="close" title="关闭" aria-label="Close">×</button>
-    <h3 id="helpTitle" data-i18n="helpTitle">使用帮助</h3>
-    <p class="sub" data-i18n="helpSubtitle">常见使用问题和解决方法</p>
+    <button class="auth-close" id="helpCloseX" data-i18n-title="close" title="Close" aria-label="Close">×</button>
+    <h3 id="helpTitle" data-i18n="helpTitle">Help</h3>
+    <p class="sub" data-i18n="helpSubtitle">Common questions and troubleshooting</p>
     <section class="help-article">
-      <h4 data-i18n="helpWallpaperQ">Deskland 频繁闪烁或重启，怎么办？</h4>
-      <p data-i18n="helpWallpaperA">如果系统壁纸会定时自动切换，切换时可能让 Deskland 闪烁或反复重启。请把常规壁纸改成不会自动切换的固定背景。</p>
+      <h4 data-i18n="helpWallpaperQ">Dynamic Island keeps flickering or restarting. How do I fix it?</h4>
+      <p data-i18n="helpWallpaperA">If your regular Windows wallpaper changes automatically, each change can make Dynamic Island flicker or restart. Use a fixed background that does not rotate.</p>
       <ol>
-        <li data-i18n="helpWallpaperStep1">打开 Windows 设置 → 个性化 → 背景。</li>
-        <li data-i18n="helpWallpaperStep2">将“个性化设置背景”设为“图片”或“纯色”，不要选择“幻灯片放映”或“Windows 聚焦”。</li>
-        <li data-i18n="helpWallpaperStep3">改完后重新打开 Deskland。</li>
+        <li data-i18n="helpWallpaperStep1">Open Windows Settings → Personalization → Background.</li>
+        <li data-i18n="helpWallpaperStep2">Set ‘Personalize your background’ to ‘Picture’ or ‘Solid color’. Do not use ‘Slideshow’ or ‘Windows spotlight’.</li>
+        <li data-i18n="helpWallpaperStep3">Restart Dynamic Island after changing this setting.</li>
       </ol>
     </section>
-    <div class="actions"><button class="ghost-btn primary" id="helpDone" data-i18n="gotIt">知道了</button></div>
+    <div class="actions"><button class="ghost-btn primary" id="helpDone" data-i18n="gotIt">Got it</button></div>
   </div>
 </div>
 
 <footer class="bottom">
-  <span class="saved" id="saved" data-i18n="autosave">设置会自动保存，并立即应用到桌面</span>
+  <span class="saved" id="saved" data-i18n="autosave">Changes are saved automatically and applied to your desktop right away</span>
   <div class="bottom-actions">
-    <button class="ghost-btn help-button" id="helpOpen" data-i18n-title="helpButtonTitle" title="常见问题" aria-label="Help">?</button>
+    <button class="ghost-btn help-button" id="helpOpen" data-i18n-title="helpButtonTitle" title="Common questions and troubleshooting" aria-label="Help">?</button>
   </div>
 </footer>
 
-<script src="thumbs-data.js"></script>
 <script>
 'use strict';
 const host = window.chrome && window.chrome.webview;
 const send = m => { if (host) host.postMessage(JSON.stringify(m)); };
 
-const state = { registry0: null, registry: null, theme: 'beach', params: {}, screen: null, icons: null,
-  langSetting: 'auto', langSys: 'zh-CN', autostartWarn: false, autostartSw: '',
+const state = { registry0: null, registry: null, theme: 'custom', params: {}, screen: null, icons: null,
+  langSetting: 'auto', langSys: 'en', autostartWarn: false, autostartSw: '',
   updateVersion: '', updateStatus: '', updateProgress: -1, updateError: '' };
 const $ = id => document.getElementById(id);
 const frame = $('preview');
 
 /* ---------- 界面语言：文字表在 i18n/<语言>.json（ui：界面文字；themes：主题名和参数——简体中文的就是 themes.json 本身） ---------- */
 // 增加语言时同步宿主 I18n.Supported 与体验版导出的语言列表。
-const LANGS = { 'en': 'English', 'zh-CN': '简体中文' };
+const LANGS = { 'en': 'English' };
 const I18N = {};
-let lang = 'zh-CN';
+let lang = 'en';
 const loadLang = code => I18N[code] ? Promise.resolve() :
   fetch('i18n/' + code + '.json').then(r => r.json()).then(j => { I18N[code] = j; }).catch(() => { I18N[code] = {}; });
 // 一句界面文字：当前语言 → 英文 → 简体中文；{名字} 换成 vars 里的值
 function t(key, vars) {
   const pick = c => I18N[c] && I18N[c].ui && I18N[c].ui[key];
-  let str = pick(lang) ?? pick('en') ?? pick('zh-CN') ?? key;
+  let str = pick(lang) ?? pick('en') ?? key;
   if (vars) str = str.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '');
   return str;
 }
@@ -415,7 +417,6 @@ function connectionErrorText(code) {
 function browserLang() {
   for (const l of navigator.languages || [navigator.language]) {
     const x = (l || '').toLowerCase();
-    if (x.startsWith('zh')) return 'zh-CN';
     if (LANGS[x.slice(0, 2)]) return x.slice(0, 2);
   }
   return 'en';
@@ -423,7 +424,7 @@ function browserLang() {
 // 主题名、说明、分组、参数按界面语言换：当前语言 → 英文 → themes.json 原文（简体中文）
 function localizeRegistry() {
   const reg = JSON.parse(JSON.stringify(state.registry0));
-  const srcs = lang === 'zh-CN' ? [] : [lang, 'en'].map(c => (I18N[c] && I18N[c].themes) || {});
+  const srcs = [lang, 'en'].map(c => (I18N[c] && I18N[c].themes) || {});
   for (const th of reg.themes) {
     const trs = srcs.map(x => x[th.id]).filter(Boolean);
     const get = f => { for (const x of trs) { const v = f(x); if (v != null) return v; } return null; };
@@ -455,7 +456,7 @@ function applyStatic() {
 }
 async function setLang(code) {
   if (!LANGS[code]) code = 'en';
-  await Promise.all([loadLang('zh-CN'), loadLang('en'), loadLang(code)]);
+  await Promise.all([loadLang('en'), loadLang(code)]);
   lang = code;
   localizeRegistry();
   applyStatic();
@@ -488,7 +489,32 @@ function fmt(p, v) {
   return p.unit ? s + ' ' + p.unit : s;
 }
 
-const thumbUrl = (value, id) => window.DESKLAND_THUMBS?.[id] || String(value || '').match(/^url\(([^)]+)\)/)?.[1] || '';
+const thumbUrl = (value, id) => imageUrlOf(themeById(id)) || window.DESKLAND_THUMBS?.[id] || String(value || '').match(/^url\(([^)]+)\)/)?.[1] || '';
+/* ---------- 自定义图片：宿主弹出文件对话框、复制到数据目录，以 https://wall.local/<文件名> 提供 ---------- */
+let browserImageUrl = '';                                  // 没有宿主时（浏览器调界面）：本地选的图片的 blob: 地址
+function imageUrlOf(th) {
+  if (!th || !th.customImage) return '';
+  if (browserImageUrl) return browserImageUrl;
+  const name = (state.params[th.id] || {}).image;
+  return name ? 'https://wall.local/' + encodeURIComponent(name) : '';
+}
+function imagePickerHtml(th) {
+  if (!th.customImage) return '';
+  const name = (state.params[th.id] || {}).image || (browserImageUrl ? 'image' : '');
+  const url = imageUrlOf(th);
+  return `<div class="group"><h3>${t('imageGroup')}</h3>
+    <div class="param image-pick">
+      <div class="row"><span class="label">${t('imageLabel')}<span class="hint">${name ? t('imageHint') : t('imageNone')}</span></span></div>
+      <div class="image-row">${url ? `<img class="image-thumb" src="${url}" alt="">` : ''}
+        <button class="ghost-btn primary" id="pickImage">${t(name ? 'changeImage' : 'chooseImage')}</button></div>
+      <input type="file" id="imageFile" accept="image/*" hidden>
+    </div></div>`;
+}
+function onImagePicked(name) {
+  (state.params[state.theme] = state.params[state.theme] || {}).image = name;
+  toPreview({ t: 'settings', v: { image: name } });
+  renderThemes(); renderControls(); flashSaved();
+}
 function renderThemes() {
   $('themes').innerHTML = state.registry.themes.map(th => {
     const locked = th.locked === true, ready = th.status === 'ready', on = th.id === state.theme;
@@ -542,7 +568,7 @@ $('reseed').addEventListener('click', () => setSeed(newSeed(), true));
 function renderControls() {
   const theme = themeById(state.theme), vals = valuesOf(theme);
   if (!theme.groups) { $('controls').innerHTML = '<div class="empty">' + t('noParams') + '</div>'; return; }
-  $('controls').innerHTML = theme.groups.map(g => `
+  $('controls').innerHTML = imagePickerHtml(theme) + theme.groups.map(g => `
     <div class="group"><h3>${g.name}</h3>
       ${g.params.map(p => `
         <div class="param${vals[p.key] !== p.default ? ' changed' : ''}" id="p-${p.key}">
@@ -588,8 +614,16 @@ function setParam(key, v) {
   if (!scheduled) { scheduled = true; setTimeout(flush, 30); }
 }
 $('controls').addEventListener('input', e => { if (e.target.dataset.key) setParam(e.target.dataset.key, +e.target.value); });
+$('controls').addEventListener('change', e => {
+  if (e.target.id !== 'imageFile' || !e.target.files[0]) return;
+  if (browserImageUrl) URL.revokeObjectURL(browserImageUrl);
+  browserImageUrl = URL.createObjectURL(e.target.files[0]);
+  toPreview({ t: 'settings', v: { imageUrl: browserImageUrl } });
+  renderThemes(); renderControls();
+});
 // 单项恢复默认：点 ↺，或双击滑块
 $('controls').addEventListener('click', e => {
+  if (e.target.closest('#pickImage')) { if (host) send({ t: 'pickImage', theme: state.theme }); else $('imageFile').click(); return; }
   const b = e.target.closest('[data-reset]');
   if (b) setParam(b.dataset.reset, paramOf(b.dataset.reset).default);
   const o = e.target.closest('[data-opt]');
@@ -727,7 +761,7 @@ function showShare(r) {
   if (!inHost) {
     $('shareDownload').href = r.full;
     $('shareDownload').textContent = t(video ? 'saveVideo' : 'saveImage');
-    $('shareDownload').download = 'Deskland.' + (video ? (r.ext || 'mp4') : 'png');
+    $('shareDownload').download = 'Dynamic Island.' + (video ? (r.ext || 'mp4') : 'png');
   }
   $('shareModal').hidden = false;
   $('shareClose').focus();
@@ -755,7 +789,7 @@ $('purchaseLater').addEventListener('click', closePurchase);
 $('purchaseModal').addEventListener('click', e => { if (e.target === $('purchaseModal')) closePurchase(); });
 $('purchaseWebsite').addEventListener('click', () => {
   if (host) send({ t: 'openWebsite' });
-  else window.open('https://deskland.app/', '_blank', 'noopener');
+  else window.open('https://github.com/BLEZZ0102/Deskland', '_blank', 'noopener');
 });
 $('shareClose').addEventListener('click', closeShare);
 $('shareModal').addEventListener('click', e => { if (e.target === $('shareModal')) closeShare(); });
@@ -785,9 +819,9 @@ $('shareReveal').addEventListener('click', () => send({ t: 'revealShare' }));
 function onHost(m) {
   if (m.t === 'init') {
     state.langSetting = m.lang || 'auto';
-    state.langSys = m.langSys || 'zh-CN';
+    state.langSys = 'en';
     setLang(m.langEff || state.langSys).then(() => {        // 先按界面语言把文字表读进来，再画界面
-      state.theme = themeById(m.theme) && themeById(m.theme).status === 'ready' ? m.theme : 'beach';
+      state.theme = themeById(m.theme) && themeById(m.theme).status === 'ready' ? m.theme : 'custom';
       state.params = m.params || {};
       state.screen = m.screen;
       $('autostart').checked = !!m.autostart;
@@ -818,6 +852,8 @@ function onHost(m) {
     state.icons = m;
     toPreview(m);
     updateFoot();
+  } else if (m.t === 'imagePicked') {
+    if (typeof m.name === 'string') onImagePicked(m.name);
   } else if (m.t === 'autostart') {
     $('autostart').checked = !!m.v;
   } else if (m.t === 'recProgress') {
@@ -834,7 +870,7 @@ function mockHost() {
   for (let c = 0; c < 4; c++) for (let row = 0; row < 9; row++) cell(c, row);
   for (const [c, row] of [[6, 0], [6, 1], [7, 3], [8, 3], [8, 4], [12, 1], [13, 1], [14, 1], [13, 2], [14, 2], [20, 0], [21, 0], [19, 5], [20, 5]]) cell(c, row);
   const bl = browserLang();
-  onHost({ t: 'init', theme: 'beach', params: {}, screen: { w: W * k, h: H * k }, autostart: false, lang: 'auto', langEff: bl, langSys: bl });
+  onHost({ t: 'init', theme: 'custom', params: {}, screen: { w: W * k, h: H * k }, autostart: false, lang: 'auto', langEff: bl, langSys: bl });
   onHost({ t: 'icons', vis: true, r });
   if (new URLSearchParams(location.search).has('updateDemo')) onHost({ t: 'updateState', version: '0.2.0', status: 'available', progress: -1 });
 }

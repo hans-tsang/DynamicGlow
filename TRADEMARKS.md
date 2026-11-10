@@ -1,7 +1,7 @@
-# 名称与图标 / Name and icon
+# Name and icon
 
-GPL-3.0 授权适用于本仓库的项目源码与随附主题素材，不授予 Deskland 名称、标识或程序图标的商标使用权。
+This project is a fork of Deskland. Upstream's notice (translated): the GPL-3.0 license does not grant trademark rights to the Deskland name, logo or application icon. The name may be used to identify the original project and give attribution. Modified distributions should use their own product name and icon and state their relationship to Deskland without implying official endorsement.
 
-介绍本项目或注明来源时可以使用 Deskland 名称。发布修改版时请使用自己的产品名称和图标，并清楚标明它与本项目的关系，避免暗示官方发布、认可或背书。
+Accordingly this fork uses its own name ("Dynamic Island") and its own icon (`host/DynamicIsland.ico`), and is not affiliated with or endorsed by the Deskland authors.
 
-The GPL-3.0 license for this repository does not grant trademark rights to the Deskland name, logo or application icon. You may use the name to identify this project and give attribution. Modified distributions should use their own product name and icon and clearly state their relationship to this project, without implying official endorsement.
+"Dynamic Island" is also the name of an Apple iPhone feature. It is used here for a personal project; pick a different name before distributing this publicly.

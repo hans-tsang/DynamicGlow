@@ -1,16 +1,16 @@
-// 本地静态服务器：node prototype/serve.mjs → http://localhost:5178/（海边插画 flat.html）
+// 本地静态服务器：node prototype/serve.mjs → http://localhost:5178/（设置页 settings.html）
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.jpg': 'image/jpeg', '.webp': 'image/webp' };
 const port = 5178;
 
 createServer(async (req, res) => {
   let path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  if (path === '/') path = '/flat.html';
+  if (path === '/') path = '/settings.html';
   const file = normalize(join(root, path));
   if (!file.startsWith(root)) { res.writeHead(403).end(); return; }
   try {
