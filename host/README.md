@@ -25,7 +25,7 @@ The build uses the C# compiler that ships with Windows and downloads a pinned We
 ## Behavior and data
 
 - Themes come from `prototype/themes.json`; only `ready` themes load. This fork ships one theme, `custom`.
-- "Choose image..." in settings opens a file dialog; the image is copied to `%LOCALAPPDATA%\DynamicIsland\wallpaper\` (older copies are removed) and served as `https://wall.local/<name>`.
+- By default the current Windows wallpaper (SPI_GETDESKWALLPAPER, falling back to `%APPDATA%\Microsoft\Windows\Themes\TranscodedWallpaper`, or the solid background colour) is copied to `%LOCALAPPDATA%\DynamicIsland\wallpaper\` and served as `https://wall.local/<name>`; it is re-checked every 3 s. "Use a different image..." (`pickImage`) sets `source` to `file`; `useWindowsWallpaper` switches back.
 - Desktop icon positions are polled every 400 ms; the page is notified only on change.
 - Paused while a foreground window is maximized or full screen; can also be paused from the tray.
 - Windows 11 24H2+ uses a layered Progman child window; older systems use WorkerW.

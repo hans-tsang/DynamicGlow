@@ -157,12 +157,89 @@ static class WallpaperImage
 
     public static string Import(string src)
     {
+        string ext = Path.GetExtension(src).ToLowerInvariant();
+        if (Array.IndexOf(Exts, ext) < 0) { MessageBox.Show("Please choose an image file (JPG, PNG, WebP, BMP, GIF, AVIF).", "Dynamic Island"); return null; }
+        return Store(src, ext, "wallpaper-", false);
+    }
+
+    // ---- The current Windows desktop wallpaper ----
+    // The original file Windows was given (if it still exists), else Windows' own copy (TranscodedWallpaper, which also covers
+    // slideshow and Spotlight), else the solid background colour.
+    static string Transcoded { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"Microsoft\Windows\Themes\TranscodedWallpaper"); } }
+
+    static string SystemPath()
+    {
+        var sb = new StringBuilder(1024);
+        try { if (Native.SystemParametersInfo(0x0073 /* SPI_GETDESKWALLPAPER */, (uint)sb.Capacity, sb, 0)) return sb.ToString(); } catch { }
+        try { using (var k = Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop")) return k == null ? "" : (k.GetValue("WallPaper") as string ?? ""); } catch { return ""; }
+    }
+
+    static string Stamp(string path)
+    {
+        try { var fi = new FileInfo(path); return fi.Exists ? fi.LastWriteTimeUtc.Ticks + ":" + fi.Length : "-"; } catch { return "?"; }
+    }
+
+    static string BackgroundColor()
+    {
+        try { using (var k = Registry.CurrentUser.OpenSubKey(@"Control Panel\Colors")) return k == null ? "0 0 0" : (k.GetValue("Background") as string ?? "0 0 0"); } catch { return "0 0 0"; }
+    }
+
+    // Changes whenever the visible Windows wallpaper changes; cheap enough to poll.
+    public static string WindowsSignature()
+    {
+        string p = SystemPath();
+        return p + "|" + (p != "" ? Stamp(p) : "") + "|" + Stamp(Transcoded) + "|" + (p == "" ? BackgroundColor() : "");
+    }
+
+    static string SniffExt(string path)
+    {
         try
         {
-            string ext = Path.GetExtension(src).ToLowerInvariant();
-            if (Array.IndexOf(Exts, ext) < 0) { MessageBox.Show("Please choose an image file (JPG, PNG, WebP, BMP, GIF, AVIF).", "Dynamic Island"); return null; }
+            var b = new byte[12];
+            using (var f = File.OpenRead(path)) if (f.Read(b, 0, 12) < 12) return null;
+            if (b[0] == 0xFF && b[1] == 0xD8) return ".jpg";
+            if (b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47) return ".png";
+            if (b[0] == 'B' && b[1] == 'M') return ".bmp";
+            if (b[0] == 'G' && b[1] == 'I' && b[2] == 'F') return ".gif";
+            if (b[0] == 'R' && b[1] == 'I' && b[2] == 'F' && b[3] == 'F' && b[8] == 'W' && b[9] == 'E' && b[10] == 'B' && b[11] == 'P') return ".webp";
+        }
+        catch { }
+        return null;
+    }
+
+    public static string ImportWindows()
+    {
+        string p = SystemPath();
+        if (p != "")
+        {
+            string ext = Path.GetExtension(p).ToLowerInvariant();
+            if (File.Exists(p) && Array.IndexOf(Exts, ext) >= 0) return Store(p, ext, "windows-", true);
+            if (File.Exists(p) && (ext = SniffExt(p)) != null) return Store(p, ext, "windows-", true);
+            string t = Transcoded, te;
+            if (File.Exists(t) && (te = SniffExt(t)) != null) return Store(t, te, "windows-", true);
+            Log.Write("Windows wallpaper not readable: " + p);
+            return null;
+        }
+        // No picture: Windows shows a solid colour, so the wallpaper is that colour.
+        try
+        {
+            string[] rgb = BackgroundColor().Split(' ');
+            var c = Color.FromArgb(int.Parse(rgb[0]), int.Parse(rgb[1]), int.Parse(rgb[2]));
+            string tmp = Path.Combine(Path.GetTempPath(), "dynamicisland-color.png");
+            using (var bmp = new Bitmap(16, 16)) { using (var g = Graphics.FromImage(bmp)) g.Clear(c); bmp.Save(tmp, System.Drawing.Imaging.ImageFormat.Png); }
+            string name = Store(tmp, ".png", "windows-color-", true);
+            try { File.Delete(tmp); } catch { }
+            return name;
+        }
+        catch (Exception ex) { Log.Write("Windows background colour failed: " + ex.Message); return null; }
+    }
+
+    static string Store(string src, string ext, string prefix, bool quiet)
+    {
+        try
+        {
             string dir = Dir();
-            string name = "wallpaper-" + DateTime.Now.ToString("yyyyMMddHHmmss") + ext;
+            string name = prefix + DateTime.Now.ToString("yyyyMMddHHmmssfff") + ext;
             File.Copy(src, Path.Combine(dir, name), true);
             foreach (string f in Directory.GetFiles(dir))
                 if (!string.Equals(Path.GetFileName(f), name, StringComparison.OrdinalIgnoreCase))
@@ -173,7 +250,7 @@ static class WallpaperImage
         catch (Exception ex)
         {
             Log.Write("Wallpaper image import failed: " + ex.Message);
-            MessageBox.Show("Couldn't use that image:\n" + ex.Message, "Dynamic Island");
+            if (!quiet) MessageBox.Show("Couldn't use that image:\n" + ex.Message, "Dynamic Island");
             return null;
         }
     }
@@ -462,6 +539,11 @@ class HostContext : ApplicationContext
         watch.Interval = 500;
         watch.Tick += delegate { Watch(); };
         watch.Start();
+        SyncWindowsWallpaper(true);
+        wallTimer = new System.Windows.Forms.Timer();
+        wallTimer.Interval = 3000;
+        wallTimer.Tick += delegate { SyncWindowsWallpaper(false); };
+        wallTimer.Start();
         StartForm();
         if (showSettings) OpenSettings();                // 用户双击程序启动：直接打开设置
     }
@@ -527,6 +609,33 @@ class HostContext : ApplicationContext
 
     void SaveSoon() { saveDue = DateTime.Now.AddMilliseconds(600); }
 
+    // By default the wallpaper page shows whatever the Windows desktop wallpaper is, and follows it when it changes.
+    // Choosing an image in settings switches source to "file" until the user goes back to the Windows wallpaper.
+    System.Windows.Forms.Timer wallTimer;
+    string wallSig;
+    void SyncWindowsWallpaper(bool force)
+    {
+        object src;
+        Settings.For("custom").TryGetValue("source", out src);
+        if ((src as string) == "file") return;
+        string sig = WallpaperImage.WindowsSignature();
+        if (!force && sig == wallSig) return;
+        wallSig = sig;
+        string name = WallpaperImage.ImportWindows();
+        if (name != null) ApplyImage("custom", name, "windows");
+    }
+
+    void ApplyImage(string theme, string name, string source)
+    {
+        var d = Settings.For(theme);
+        d["image"] = name;
+        d["source"] = source;
+        if (theme == Settings.Theme && form != null)
+            form.Post(Json.Stringify(Json.Obj("t", "settings", "v", Json.Obj("image", name))));
+        SaveSoon();
+        if (settingsWin != null) settingsWin.Post(Json.Stringify(Json.Obj("t", "imagePicked", "name", name, "source", source)));
+    }
+
     bool ThemeAllowed(string id)
     {
         return Themes.Allowed(pageDir, id, delegate(string product) { return false; });
@@ -564,11 +673,12 @@ class HostContext : ApplicationContext
             {
                 string theme = m["theme"] as string;
                 if (theme == null) return;
-                object keepImage = null;
+                object keepImage = null, keepSource = null;
                 Dictionary<string, object> old;
-                if (Settings.Params.TryGetValue(theme, out old)) old.TryGetValue("image", out keepImage);
+                if (Settings.Params.TryGetValue(theme, out old)) { old.TryGetValue("image", out keepImage); old.TryGetValue("source", out keepSource); }
                 Settings.Params.Remove(theme);
                 if (keepImage != null) Settings.For(theme)["image"] = keepImage;   // resetting sliders never forgets the chosen image
+                if (keepSource != null) Settings.For(theme)["source"] = keepSource;
                 if (theme == Settings.Theme && form != null) form.Post("{\"t\":\"reset\"}");
                 SaveSoon();
                 Log.Write("恢复默认设置：" + theme);
@@ -583,12 +693,14 @@ class HostContext : ApplicationContext
                 {
                     string name = WallpaperImage.Pick(win);
                     if (name == null) return;
-                    Settings.For(theme)["image"] = name;
-                    if (theme == Settings.Theme && form != null)
-                        form.Post(Json.Stringify(Json.Obj("t", "settings", "v", Json.Obj("image", name))));
-                    SaveSoon();
-                    if (settingsWin != null) settingsWin.Post(Json.Stringify(Json.Obj("t", "imagePicked", "name", name)));
+                    ApplyImage(theme, name, "file");
                 });
+                break;
+            }
+            case "useWindowsWallpaper":
+            {
+                Settings.For("custom")["source"] = "windows";
+                SyncWindowsWallpaper(true);
                 break;
             }
             case "theme":
@@ -913,6 +1025,7 @@ class HostContext : ApplicationContext
         if (exiting) return;
         exiting = true;
         watch.Stop();
+        if (wallTimer != null) wallTimer.Stop();
         if (saveDue != DateTime.MaxValue) Settings.Save();
         if (settingsWin != null) { try { settingsWin.Close(); } catch { } }
         hotkey.Dispose();
@@ -1567,6 +1680,7 @@ static class Native
     public const uint LWA_ALPHA = 0x2, SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002;
     public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
     public const int SW_SHOW = 5, SW_RESTORE = 9;
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SystemParametersInfo(uint action, uint param, StringBuilder sb, uint winIni);
     [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h, int id, uint modifiers, uint vk);
     [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int val, int size);
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);

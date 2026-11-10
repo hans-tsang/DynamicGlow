@@ -500,18 +500,24 @@ function imageUrlOf(th) {
 }
 function imagePickerHtml(th) {
   if (!th.customImage) return '';
-  const name = (state.params[th.id] || {}).image || (browserImageUrl ? 'image' : '');
+  const p = state.params[th.id] || {};
+  const name = p.image || (browserImageUrl ? 'image' : '');
+  const fromWindows = !!host && p.source !== 'file';
   const url = imageUrlOf(th);
+  const hint = !host ? (name ? t('imageHint') : t('imageNone')) : fromWindows ? t('imageWindowsHint') : t('imageFileHint');
   return `<div class="group"><h3>${t('imageGroup')}</h3>
     <div class="param image-pick">
-      <div class="row"><span class="label">${t('imageLabel')}<span class="hint">${name ? t('imageHint') : t('imageNone')}</span></span></div>
+      <div class="row"><span class="label">${t(fromWindows ? 'imageWindowsLabel' : 'imageLabel')}<span class="hint">${hint}</span></span></div>
       <div class="image-row">${url ? `<img class="image-thumb" src="${url}" alt="">` : ''}
-        <button class="ghost-btn primary" id="pickImage">${t(name ? 'changeImage' : 'chooseImage')}</button></div>
+        <button class="ghost-btn${fromWindows ? '' : ' primary'}" id="pickImage">${t(host ? 'otherImage' : name ? 'changeImage' : 'chooseImage')}</button>
+        ${host && !fromWindows ? `<button class="ghost-btn primary" id="useWindows">${t('useWindows')}</button>` : ''}</div>
       <input type="file" id="imageFile" accept="image/*" hidden>
     </div></div>`;
 }
-function onImagePicked(name) {
-  (state.params[state.theme] = state.params[state.theme] || {}).image = name;
+function onImagePicked(name, source) {
+  const p = (state.params[state.theme] = state.params[state.theme] || {});
+  p.image = name;
+  if (source) p.source = source;
   toPreview({ t: 'settings', v: { image: name } });
   renderThemes(); renderControls(); flashSaved();
 }
@@ -623,6 +629,7 @@ $('controls').addEventListener('change', e => {
 });
 // 单项恢复默认：点 ↺，或双击滑块
 $('controls').addEventListener('click', e => {
+  if (e.target.closest('#useWindows')) { if (host) send({ t: 'useWindowsWallpaper' }); return; }
   if (e.target.closest('#pickImage')) { if (host) send({ t: 'pickImage', theme: state.theme }); else $('imageFile').click(); return; }
   const b = e.target.closest('[data-reset]');
   if (b) setParam(b.dataset.reset, paramOf(b.dataset.reset).default);
@@ -853,7 +860,7 @@ function onHost(m) {
     toPreview(m);
     updateFoot();
   } else if (m.t === 'imagePicked') {
-    if (typeof m.name === 'string') onImagePicked(m.name);
+    if (typeof m.name === 'string') onImagePicked(m.name, m.source);
   } else if (m.t === 'autostart') {
     $('autostart').checked = !!m.v;
   } else if (m.t === 'recProgress') {

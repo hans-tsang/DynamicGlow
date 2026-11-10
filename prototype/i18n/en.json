@@ -112,6 +112,11 @@
     "imageNone": "No image chosen yet",
     "chooseImage": "Choose image…",
     "changeImage": "Change image…",
+    "imageWindowsLabel": "Your Windows wallpaper",
+    "imageWindowsHint": "Follows your current desktop wallpaper automatically. Change it in Windows Settings > Personalization > Background.",
+    "imageFileHint": "Using an image you chose instead of your Windows wallpaper.",
+    "otherImage": "Use a different image…",
+    "useWindows": "Use my Windows wallpaper",
     "imageHint": "JPG, PNG, WebP, BMP, GIF or AVIF. A copy is kept, so you can move or delete the original."
   },
   "host": {

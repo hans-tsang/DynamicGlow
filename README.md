@@ -1,6 +1,6 @@
 # Dynamic Island
 
-An adaptive Windows wallpaper that uses **your own picture**. Desktop icons get a soft frosted-glass, shadow or glow patch that follows them as you move them around, and the picture can slowly pan and zoom.
+An adaptive Windows wallpaper that uses **your current Windows wallpaper**, whatever it is, and follows it when it changes (including slideshows and Spotlight / Bing apps). Desktop icons get a soft frosted-glass, shadow or glow patch that follows them as you move them around, and the picture can slowly pan and zoom.
 
 Dynamic Island is a personal fork of [Deskland](https://github.com/BLEZZ0102/Deskland) (GPL-3.0). It was built by analysing Deskland with [REA](https://github.com/morluto/rea), then replacing the built-in Beach and Meadow themes with a single "My Wallpaper" theme.
 
@@ -16,13 +16,13 @@ powershell -ExecutionPolicy Bypass -File host\build.ps1
 host\bin\DynamicIsland.exe
 ```
 
-The settings window opens. Click **Choose image...**, pick a JPG / PNG / WebP / BMP / GIF / AVIF, and it becomes your wallpaper immediately. Quit from the tray icon (or `host\bin\DynamicIsland.exe --exit`) to restore your normal Windows wallpaper.
+It picks up your current Windows wallpaper automatically; change the wallpaper in Windows Settings > Personalization > Background and Dynamic Island follows within a few seconds. To use a different picture instead, click **Use a different image...** in settings; **Use my Windows wallpaper** switches back. Quit from the tray icon (or `host\bin\DynamicIsland.exe --exit`) to restore your normal Windows wallpaper.
 
 ## Settings
 
 | Group | Setting | What it does |
 | --- | --- | --- |
-| Your image | Wallpaper image | The picture. A copy is kept in `%LOCALAPPDATA%\DynamicIsland\wallpaper\`, so you can move or delete the original. |
+| Your image | Your Windows wallpaper / a chosen image | The picture (a copy is kept in `%LOCALAPPDATA%\DynamicIsland\wallpaper\`). |
 | Image | Fit | Fill, Fit, Stretch or Center |
 | Image | Dim | Darkens the picture so icons stay readable |
 | Around icons | Effect | None, Frosted, Shadow or Glow |
